@@ -9,12 +9,14 @@ import queue
 import time
 from datetime import datetime
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 
 # 导入自定义模块
 from pdf_processor import PDFProcessor
 from bank_parsers import get_bank_parser
 from utils import setup_logging, get_config, save_config
 from ui_components import ToolTipButton, ProgressWindow, BankMappingDialog
+from exceptions import PDFProcessingError, BankDetectionError
 
 # 设置日志
 logger = setup_logging()
@@ -27,7 +29,8 @@ class BankStatementApp(ThemedTk):
         self.title("银行账单批量处理工具")
         self.geometry("900x700")
         self.minsize(800, 600)
-        self.config = get_config()
+        self.app_config = get_config()
+        # 将 self.config 重命名为 self.app_config
         
         # 创建队列用于线程间通信
         self.queue = queue.Queue()
@@ -157,116 +160,138 @@ class BankStatementApp(ThemedTk):
         files = filedialog.askopenfilenames(
             title="选择银行账单PDF文件",
             filetypes=[("PDF文件", "*.pdf")],
-            initialdir=self.config.get("last_pdf_dir", os.path.expanduser("~"))
+            initialdir=self.app_config.get("last_pdf_dir", os.path.expanduser("~"))
         )
         
         if files:
-            # 保存最后使用的目录
-            self.config["last_pdf_dir"] = os.path.dirname(files[0])
-            save_config(self.config)
+            # 保存最后的目录
+            self.app_config["last_pdf_dir"] = os.path.dirname(files[0])
+            save_config(self.app_config)
             
-            # 添加文件到列表
+            # 清空现有文件列表
+            for item in self.file_tree.get_children():
+                self.file_tree.delete(item)
+            
+            self.pdf_files = []
+            
+            # 添加新文件
             for file_path in files:
-                if file_path not in [f["path"] for f in self.pdf_files]:
-                    # 尝试自动识别银行
-                    bank_name = self.auto_detect_bank(file_path)
+                file_name = os.path.basename(file_path)
+                
+                # 检测银行类型
+                try:
+                    processor = PDFProcessor()
+                    bank_name = processor.detect_bank_type(file_path, self.bank_mapping)
                     
-                    file_info = {
+                    # 添加到列表
+                    self.file_tree.insert("", tk.END, values=(file_name, bank_name, "待处理"))
+                    
+                    # 添加到文件列表
+                    self.pdf_files.append({
+                        "name": file_name,
                         "path": file_path,
-                        "name": os.path.basename(file_path),
-                        "bank": bank_name,
-                        "status": "待处理"
-                    }
+                        "bank": bank_name
+                    })
                     
-                    self.pdf_files.append(file_info)
-                    self.file_tree.insert("", tk.END, values=(file_info["name"], file_info["bank"], file_info["status"]))
+                    self.log(f"添加文件: {file_name}，检测到银行类型: {bank_name}")
+                    
+                except BankDetectionError as e:
+                    # 银行类型检测失败
+                    self.file_tree.insert("", tk.END, values=(file_name, "未知", "待处理"))
+                    
+                    # 添加到文件列表
+                    self.pdf_files.append({
+                        "name": file_name,
+                        "path": file_path,
+                        "bank": "未知"
+                    })
+                    
+                    self.log(f"添加文件: {file_name}，无法检测银行类型: {str(e)}")
+                
+                except Exception as e:
+                    # 其他错误
+                    self.log(f"添加文件 {file_name} 时出错: {str(e)}")
             
-            self.log(f"已添加 {len(files)} 个PDF文件")
-    
-    def auto_detect_bank(self, file_path):
-        """尝试自动检测银行类型"""
-        try:
-            processor = PDFProcessor()
-            return processor.detect_bank_type(file_path)
-        except Exception as e:
-            logger.error(f"自动检测银行失败: {str(e)}")
-            return "未知"
+            # 更新状态
+            self.status_label.config(text=f"已添加 {len(self.pdf_files)} 个文件")
     
     def select_output_file(self):
-        """选择输出Excel文件"""
+        """选择输出文件"""
         file_path = filedialog.asksaveasfilename(
             title="选择输出Excel文件",
             filetypes=[("Excel文件", "*.xlsx")],
             defaultextension=".xlsx",
-            initialdir=self.config.get("last_output_dir", os.path.expanduser("~")),
-            initialfile=f"银行账单汇总_{datetime.now().strftime('%Y%m%d')}.xlsx"
+            initialdir=self.app_config.get("last_output_dir", os.path.expanduser("~")),
+            initialfile=self.app_config.get("last_output_file", "银行账单汇总.xlsx")
         )
         
         if file_path:
             self.output_file = file_path
-            self.config["last_output_dir"] = os.path.dirname(file_path)
-            save_config(self.config)
-            
             self.output_label.config(text=f"输出文件: {os.path.basename(file_path)}")
-            self.log(f"已选择输出文件: {file_path}")
+            
+            # 保存最后的目录和文件名
+            self.app_config["last_output_dir"] = os.path.dirname(file_path)
+            self.app_config["last_output_file"] = file_path
+            save_config(self.app_config)
+            
+            self.log(f"设置输出文件: {file_path}")
     
     def start_processing(self):
         """开始处理PDF文件"""
-        if not self.pdf_files:
-            messagebox.showwarning("警告", "请先选择PDF文件")
-            return
-        
-        if not self.output_file:
-            messagebox.showwarning("警告", "请先选择输出Excel文件")
-            return
-        
         # 检查是否有未知银行
         unknown_banks = [f for f in self.pdf_files if f["bank"] == "未知"]
         if unknown_banks:
-            if not messagebox.askyesno("确认", f"有 {len(unknown_banks)} 个文件的银行类型未识别，是否继续处理？"):
+            if not messagebox.askyesno("警告", f"有 {len(unknown_banks)} 个文件的银行类型未知，是否继续处理？"):
                 return
         
+        # 检查是否有文件和输出路径
+        if not self.pdf_files:
+            messagebox.showwarning("警告", "请先选择要处理的PDF文件")
+            return
+        
+        if not self.output_file:
+            messagebox.showwarning("警告", "请先选择输出Excel文件路径")
+            return
+        
         # 禁用按钮
-        self.process_btn.config(state=tk.DISABLED)
         self.select_pdf_btn.config(state=tk.DISABLED)
         self.select_output_btn.config(state=tk.DISABLED)
+        self.process_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
         
         # 更新状态
-        self.is_processing = True
         self.status_label.config(text="处理中...")
+        self.is_processing = True
         
         # 创建进度窗口
         self.progress_window = ProgressWindow(self, len(self.pdf_files))
         
         # 启动处理线程
-        self.processing_thread = threading.Thread(target=self.process_files)
+        self.processing_thread = threading.Thread(target=self.process_files_parallel)
         self.processing_thread.daemon = True
         self.processing_thread.start()
+        
+        self.log("开始处理文件...")
     
-    def process_files(self):
-        """在单独的线程中处理文件"""
+    def process_files_parallel(self):
+        """在多线程中并行处理文件"""
         try:
             # 初始化结果DataFrame
             all_results = []
             
-            for i, file_info in enumerate(self.pdf_files):
+            # 定义单个文件处理函数
+            def process_single_file(file_info):
                 if not self.is_processing:
-                    # 如果处理被停止
-                    self.queue.put(("log", "处理已停止"))
-                    break
-                
-                try:
-                    # 更新状态
-                    self.queue.put(("update_status", (i, file_info["name"], "处理中")))
+                    return None
                     
+                try:
                     # 获取对应的银行解析器
                     bank_parser = get_bank_parser(file_info["bank"])
                     
                     if bank_parser is None:
                         self.queue.put(("log", f"错误: 不支持的银行类型 '{file_info['bank']}'，跳过文件 {file_info['name']}"))
-                        self.queue.put(("update_status", (i, file_info["name"], "失败")))
-                        continue
+                        self.queue.put(("update_status", (file_info["index"], file_info["name"], "失败")))
+                        return None
                     
                     # 处理PDF文件
                     processor = PDFProcessor()
@@ -278,51 +303,59 @@ class BankStatementApp(ThemedTk):
                             trans["银行"] = file_info["bank"]
                             trans["文件名"] = file_info["name"]
                         
-                        all_results.extend(transactions)
                         self.queue.put(("log", f"成功处理 {file_info['name']}，提取了 {len(transactions)} 条交易记录"))
-                        self.queue.put(("update_status", (i, file_info["name"], "成功")))
+                        self.queue.put(("update_status", (file_info["index"], file_info["name"], "成功")))
+                        return transactions
                     else:
                         self.queue.put(("log", f"警告: 未能从 {file_info['name']} 提取任何交易记录"))
-                        self.queue.put(("update_status", (i, file_info["name"], "无数据")))
+                        self.queue.put(("update_status", (file_info["index"], file_info["name"], "无数据")))
+                        return None
                     
                 except Exception as e:
                     logger.exception(f"处理文件 {file_info['name']} 时出错")
                     self.queue.put(("log", f"错误: 处理 {file_info['name']} 失败 - {str(e)}"))
-                    self.queue.put(("update_status", (i, file_info["name"], "失败")))
+                    self.queue.put(("update_status", (file_info["index"], file_info["name"], "失败")))
+                    return None
+            
+            # 为每个文件添加索引
+            for i, file_info in enumerate(self.pdf_files):
+                file_info["index"] = i
+            
+            # 使用线程池并行处理文件
+            with ThreadPoolExecutor(max_workers=min(os.cpu_count(), len(self.pdf_files))) as executor:
+                futures = {executor.submit(process_single_file, file_info): file_info for file_info in self.pdf_files}
                 
-                # 更新进度
-                self.queue.put(("update_progress", i + 1))
+                # 收集结果
+                for i, future in enumerate(futures):
+                    result = future.result()
+                    if result:
+                        all_results.extend(result)
+                    # 更新进度
+                    self.queue.put(("update_progress", i + 1))
             
             # 保存结果到Excel
             if all_results and self.is_processing:
+                # 创建DataFrame
                 df = pd.DataFrame(all_results)
                 
                 # 标准化列名和顺序
-                standard_columns = [
-                    "银行", "文件名", "交易日期", "交易时间", "交易类型", "交易金额", 
-                    "收入金额", "支出金额", "账户余额", "交易描述", "对方账号", "对方户名", 
-                    "交易渠道", "交易地点", "备注"
-                ]
-                
-                # 确保所有标准列都存在
-                for col in standard_columns:
+                columns = ["交易日期", "描述", "收入", "支出", "余额", "银行", "文件名"]
+                for col in columns:
                     if col not in df.columns:
                         df[col] = ""
                 
-                # 重新排序列
-                existing_cols = [col for col in standard_columns if col in df.columns]
-                other_cols = [col for col in df.columns if col not in standard_columns]
-                df = df[existing_cols + other_cols]
+                # 选择需要的列并排序
+                df = df[columns]
                 
-                # 保存到Excel
-                df.to_excel(self.output_file, index=False, sheet_name="交易记录")
+                # 创建Excel写入器
+                with pd.ExcelWriter(self.output_file, engine="openpyxl") as writer:
+                    # 写入明细表
+                    df.to_excel(writer, sheet_name="交易明细", index=False)
+                    
+                    # 创建汇总表
+                    self.create_summary_tables(df, writer)
                 
-                # 创建汇总表
-                self.create_summary_sheet(self.output_file, df)
-                
-                self.queue.put(("log", f"已成功将 {len(all_results)} 条交易记录保存到 {self.output_file}"))
-            elif not all_results:
-                self.queue.put(("log", "未提取到任何交易记录，未生成Excel文件"))
+                self.queue.put(("log", f"成功保存结果到 {self.output_file}"))
         
         except Exception as e:
             logger.exception("处理过程中发生错误")
@@ -332,48 +365,32 @@ class BankStatementApp(ThemedTk):
             # 处理完成
             self.queue.put(("processing_done", None))
     
-    def create_summary_sheet(self, excel_file, df):
+    def create_summary_tables(self, df, writer):
         """创建汇总表"""
         try:
-            # 读取已保存的Excel文件
-            with pd.ExcelWriter(excel_file, engine='openpyxl', mode='a') as writer:
-                # 按银行汇总
-                bank_summary = df.groupby('银行').agg({
-                    '收入金额': 'sum',
-                    '支出金额': 'sum',
-                    '交易日期': ['min', 'max'],
-                    '文件名': 'nunique'
-                }).reset_index()
-                
-                bank_summary.columns = ['银行', '总收入', '总支出', '起始日期', '结束日期', '文件数']
-                bank_summary['净收入'] = bank_summary['总收入'] - bank_summary['总支出']
-                
-                # 保存汇总表
-                bank_summary.to_excel(writer, sheet_name='银行汇总', index=False)
-                
-                # 按月汇总
-                if '交易日期' in df.columns:
-                    # 确保交易日期是日期类型
-                    df['交易日期'] = pd.to_datetime(df['交易日期'], errors='coerce')
-                    df['月份'] = df['交易日期'].dt.strftime('%Y-%m')
-                    
-                    month_summary = df.groupby('月份').agg({
-                        '收入金额': 'sum',
-                        '支出金额': 'sum',
-                        '交易日期': 'count'
-                    }).reset_index()
-                    
-                    month_summary.columns = ['月份', '总收入', '总支出', '交易笔数']
-                    month_summary['净收入'] = month_summary['总收入'] - month_summary['总支出']
-                    
-                    # 按月份排序
-                    month_summary = month_summary.sort_values('月份')
-                    
-                    # 保存月度汇总
-                    month_summary.to_excel(writer, sheet_name='月度汇总', index=False)
+            # 按银行汇总
+            bank_summary = df.groupby("银行").agg({
+                "收入": "sum",
+                "支出": "sum",
+                "交易日期": "count"
+            }).rename(columns={"交易日期": "交易笔数"})
             
-            self.queue.put(("log", "已创建汇总报表"))
-        
+            bank_summary["净收入"] = bank_summary["收入"] - bank_summary["支出"]
+            bank_summary.to_excel(writer, sheet_name="银行汇总")
+            
+            # 按月汇总
+            df["月份"] = pd.to_datetime(df["交易日期"]).dt.strftime("%Y-%m")
+            month_summary = df.groupby("月份").agg({
+                "收入": "sum",
+                "支出": "sum",
+                "交易日期": "count"
+            }).rename(columns={"交易日期": "交易笔数"})
+            
+            month_summary["净收入"] = month_summary["收入"] - month_summary["支出"]
+            month_summary.to_excel(writer, sheet_name="月度汇总")
+            
+            self.queue.put(("log", "成功创建汇总表"))
+            
         except Exception as e:
             logger.exception("创建汇总表时出错")
             self.queue.put(("log", f"创建汇总表时出错: {str(e)}"))
@@ -383,89 +400,91 @@ class BankStatementApp(ThemedTk):
         if self.is_processing:
             self.is_processing = False
             self.log("正在停止处理...")
+            self.status_label.config(text="正在停止...")
     
     def check_queue(self):
-        """检查队列中的消息"""
+        """检查队列消息"""
         try:
             while True:
-                message_type, message = self.queue.get_nowait()
+                message = self.queue.get_nowait()
                 
-                if message_type == "log":
-                    self.log(message)
-                elif message_type == "update_status":
-                    idx, filename, status = message
-                    self.update_file_status(idx, status)
-                elif message_type == "update_progress":
-                    if hasattr(self, 'progress_window'):
-                        self.progress_window.update_progress(message)
-                elif message_type == "processing_done":
+                if message[0] == "log":
+                    self.log(message[1])
+                elif message[0] == "update_status":
+                    self.update_file_status(*message[1])
+                elif message[0] == "update_progress":
+                    if hasattr(self, "progress_window") and self.progress_window:
+                        self.progress_window.update_progress(message[1])
+                elif message[0] == "processing_done":
                     self.processing_done()
                 
                 self.queue.task_done()
-        
         except queue.Empty:
             pass
         
         # 继续检查队列
         self.after(100, self.check_queue)
     
-    def update_file_status(self, idx, status):
+    def update_file_status(self, index, file_name, status):
         """更新文件状态"""
-        if 0 <= idx < len(self.pdf_files):
-            self.pdf_files[idx]["status"] = status
-            
-            # 更新树形视图
-            item_id = self.file_tree.get_children()[idx]
-            values = self.file_tree.item(item_id, "values")
-            self.file_tree.item(item_id, values=(values[0], values[1], status))
+        items = self.file_tree.get_children()
+        if index < len(items):
+            item = items[index]
+            values = list(self.file_tree.item(item, "values"))
+            values[2] = status
+            self.file_tree.item(item, values=values)
     
     def processing_done(self):
         """处理完成后的操作"""
         # 启用按钮
-        self.process_btn.config(state=tk.NORMAL)
         self.select_pdf_btn.config(state=tk.NORMAL)
         self.select_output_btn.config(state=tk.NORMAL)
+        self.process_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         
         # 更新状态
-        self.is_processing = False
-        self.status_label.config(text="就绪")
+        self.status_label.config(text="处理完成")
         
         # 关闭进度窗口
-        if hasattr(self, 'progress_window'):
+        if hasattr(self, "progress_window") and self.progress_window:
             self.progress_window.destroy()
+            self.progress_window = None
         
         # 显示完成消息
-        if os.path.exists(self.output_file):
+        if self.is_processing:  # 如果不是被用户中断的
             if messagebox.askyesno("处理完成", "所有文件处理完成，是否打开生成的Excel文件？"):
                 self.open_excel_file()
-        else:
-            messagebox.showinfo("处理完成", "处理已完成，但未生成Excel文件")
+        
+        self.is_processing = False
     
     def open_excel_file(self):
         """打开生成的Excel文件"""
-        if os.path.exists(self.output_file):
+        if self.output_file and os.path.exists(self.output_file):
             os.startfile(self.output_file)
+        else:
+            messagebox.showerror("错误", "无法打开Excel文件，文件不存在")
     
     def log(self, message):
         """添加日志消息"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        log_message = f"[{timestamp}] {message}\n"
+        # 获取当前时间
+        now = datetime.now().strftime("%H:%M:%S")
+        log_message = f"[{now}] {message}\n"
         
+        # 添加到日志区域
         self.log_text.config(state=tk.NORMAL)
         self.log_text.insert(tk.END, log_message)
         self.log_text.see(tk.END)
         self.log_text.config(state=tk.DISABLED)
         
-        # 同时写入日志文件
+        # 写入日志文件
         logger.info(message)
     
     def show_context_menu(self, event):
         """显示右键菜单"""
-        # 获取点击的项目
+        # 获取点击的项
         item = self.file_tree.identify_row(event.y)
         if item:
-            # 选中该项目
+            # 选中该项
             self.file_tree.selection_set(item)
             # 显示菜单
             self.context_menu.post(event.x_root, event.y_root)
@@ -473,42 +492,58 @@ class BankStatementApp(ThemedTk):
     def remove_selected_file(self):
         """移除选中的文件"""
         selected = self.file_tree.selection()
-        if selected:
-            for item in selected:
-                idx = self.file_tree.index(item)
-                if 0 <= idx < len(self.pdf_files):
-                    del self.pdf_files[idx]
-                    self.file_tree.delete(item)
-            
-            self.log(f"已移除 {len(selected)} 个文件")
+        if not selected:
+            return
+        
+        # 获取选中项的索引
+        items = self.file_tree.get_children()
+        index = items.index(selected[0])
+        
+        # 从列表中移除
+        if index < len(self.pdf_files):
+            file_info = self.pdf_files.pop(index)
+            self.log(f"移除文件: {file_info['name']}")
+        
+        # 从树中移除
+        self.file_tree.delete(selected[0])
+        
+        # 更新状态
+        self.status_label.config(text=f"已添加 {len(self.pdf_files)} 个文件")
     
     def preview_pdf(self):
         """预览PDF内容"""
         selected = self.file_tree.selection()
-        if selected:
-            item = selected[0]
-            idx = self.file_tree.index(item)
-            if 0 <= idx < len(self.pdf_files):
-                file_path = self.pdf_files[idx]["path"]
-                try:
-                    # 使用系统默认PDF查看器打开文件
-                    os.startfile(file_path)
-                except Exception as e:
-                    messagebox.showerror("错误", f"无法打开PDF文件: {str(e)}")
+        if not selected:
+            return
+        
+        # 获取选中项的索引
+        items = self.file_tree.get_children()
+        index = items.index(selected[0])
+        
+        # 获取文件路径
+        if index < len(self.pdf_files):
+            file_path = self.pdf_files[index]["path"]
+            
+            # 使用系统默认程序打开PDF
+            try:
+                os.startfile(file_path)
+            except Exception as e:
+                messagebox.showerror("错误", f"无法打开PDF文件: {str(e)}")
     
     def open_bank_mapping(self):
         """打开银行映射设置"""
         dialog = BankMappingDialog(self, self.bank_mapping)
         self.wait_window(dialog)
+        
         if dialog.result:
             self.bank_mapping = dialog.result
-            # 保存到配置
-            self.config["bank_mapping"] = self.bank_mapping
-            save_config(self.config)
+            self.app_config["bank_mapping"] = self.bank_mapping
+            save_config(self.app_config)
+            self.log("已更新银行识别映射设置")
     
     def open_advanced_settings(self):
-        """打开高级设置"""
-        # TODO: 实现高级设置对话框
+        """高级设置"""
+        # TODO: 实现高级设置
         messagebox.showinfo("提示", "高级设置功能尚未实现")
     
     def show_help(self):
@@ -563,8 +598,6 @@ class BankStatementApp(ThemedTk):
 - 自动识别银行类型
 - 提取交易记录并导出到Excel
 - 生成汇总报表
-
-作者: Trea AI
         """
         
         messagebox.showinfo("关于", about_text)
@@ -572,10 +605,10 @@ class BankStatementApp(ThemedTk):
     def load_last_session(self):
         """加载上次会话的配置"""
         # 加载银行映射
-        self.bank_mapping = self.config.get("bank_mapping", {})
+        self.bank_mapping = self.app_config.get("bank_mapping", {})
         
         # 加载上次的输出文件
-        last_output = self.config.get("last_output_file", "")
+        last_output = self.app_config.get("last_output_file", "")
         if last_output and os.path.dirname(last_output):
             self.output_file = last_output
             self.output_label.config(text=f"输出文件: {os.path.basename(last_output)}")
@@ -584,13 +617,14 @@ class BankStatementApp(ThemedTk):
         """关闭应用程序时的操作"""
         # 保存当前配置
         if self.output_file:
-            self.config["last_output_file"] = self.output_file
+            self.app_config["last_output_file"] = self.output_file
         
-        save_config(self.config)
+        save_config(self.app_config)
         
         # 关闭应用程序
         self.destroy()
 
+# 主程序入口
 if __name__ == "__main__":
     # 检查是否是PyInstaller打包的可执行文件
     if getattr(sys, 'frozen', False):

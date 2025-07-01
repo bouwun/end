@@ -30,7 +30,7 @@ class PDFProcessor:
             "邮储银行": ["中国邮政储蓄银行", "邮储", "PSBC", "Postal Savings Bank of China"]
         }
     
-    def detect_bank_type(self, pdf_path):
+    def detect_bank_type(self, pdf_path, bank_mapping=None):
         """检测PDF文件的银行类型"""
         try:
             # 提取PDF文件的前几页文本用于识别
