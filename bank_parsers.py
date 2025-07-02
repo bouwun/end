@@ -542,6 +542,335 @@ class CMBParser(BankParser):
                     return i
         return None
 
+class ESunBankParser(BankParser):
+    """玉山银行账单解析器 - 增强版"""
+    
+    def parse(self, pdf):
+        transactions = []
+        account_info = {}
+        
+        # 提取表格
+        tables = self.extract_tables(pdf)
+        
+        # 提取文本用于辅助识别
+        full_text = ""
+        for page in pdf.pages:
+            page_text = page.extract_text() or ""
+            full_text += page_text + "\n\n"
+        
+        # 记录提取的文本，用于调试
+        logger.debug(f"提取的文本内容: {full_text[:500]}...")
+        
+        # 尝试提取账户信息 - 同时支持英文和繁体中文
+        account_match = re.search(r'Account No\.\s*:\s*([\d\w]+)|帳戶號碼\s*:\s*([\d\w]+)', full_text)
+        if account_match:
+            account_info['账户号码'] = account_match.group(1) or account_match.group(2)
+        
+        account_type_match = re.search(r'Account Type\s*:\s*([^\n]+)|帳戶類型\s*:\s*([^\n]+)', full_text)
+        if account_type_match:
+            account_info['账户类型'] = account_type_match.group(1) or account_type_match.group(2)
+        
+        # 查找 "Account Transaction History" 关键字
+        account_history_match = re.search(r'Account Transaction History|帳戶交易歷史', full_text, re.IGNORECASE)
+        if account_history_match:
+            logger.info("找到 'Account Transaction History' 关键字")
+            
+            # 尝试识别账户类型
+            account_types = ["Savings Account", "Current Account", "Time Deposit", "Foreign Currency", 
+                           "活期存款", "定期存款", "外幣帳戶", "支票帳戶"]
+            
+            detected_account_type = None
+            for acc_type in account_types:
+                if acc_type.lower() in full_text.lower():
+                    detected_account_type = acc_type
+                    logger.info(f"检测到账户类型: {detected_account_type}")
+                    account_info['账户类型'] = detected_account_type
+                    break
+        
+        # 如果没有找到表格，尝试使用文本分析
+        if not tables:
+            logger.warning("未能从PDF中提取到表格，尝试使用文本分析")
+            
+            # 尝试从文本中提取交易记录
+            transactions = self._extract_transactions_from_text(full_text)
+            if transactions:
+                # 添加账户信息到每个交易记录
+                for transaction in transactions:
+                    transaction.update(account_info)
+                logger.info(f"通过文本分析成功提取到{len(transactions)}条交易记录")
+                return transactions
+        
+        # 处理提取到的表格
+        for table_info in tables:
+            table = table_info['data']
+            page_num = table_info['page']
+            
+            # 跳过空表格
+            if not table or len(table) <= 1:
+                continue
+            
+            # 查找表头行
+            header_row = None
+            for i, row in enumerate(table):
+                row_text = " ".join([str(cell) for cell in row if cell])
+                # 增加更多可能的表头标识，包括繁体中文和 "Account Transaction History" 相关标识
+                if ("Transaction" in row_text and "Date" in row_text) or \
+                   "交易日期" in row_text or \
+                   "交易日" in row_text or \
+                   "Transaction Date" in row_text or \
+                   "Date" in row_text or \
+                   "Currency" in row_text or \
+                   "Description" in row_text or \
+                   "Withdrawal" in row_text or \
+                   "Deposit" in row_text or \
+                   "Balance" in row_text or \
+                   "幣別" in row_text or \
+                   "摘要" in row_text or \
+                   "提款" in row_text or \
+                   "存款" in row_text or \
+                   "餘額" in row_text or \
+                   "Account Transaction History" in row_text or \
+                   "帳戶交易歷史" in row_text:
+                    header_row = i
+                    break
+            
+            if header_row is None:
+                # 如果找不到表头，尝试使用第一行作为表头
+                if len(table) > 1:
+                    header_row = 0
+                else:
+                    continue
+            
+            # 解析表头
+            headers = [self.clean_text(cell) for cell in table[header_row]]
+            
+            # 查找关键列索引 - 增加繁体中文支持
+            date_idx = self._find_column_index(headers, [
+                "Transaction Date", "交易日期", "日期", "Date", "Transaction", "交易日", "Value Date", "入帳日"
+            ])
+            currency_idx = self._find_column_index(headers, [
+                "Currency", "币别", "货币", "幣別", "幣種", "币种", "Ccy"
+            ])
+            desc_idx = self._find_column_index(headers, [
+                "Description", "摘要", "交易描述", "Value Date", "摘要", "交易說明", "備註", "附註", "Particulars"
+            ])
+            withdrawal_idx = self._find_column_index(headers, [
+                "Withdrawal", "支出", "借方金额", "支出", "提款", "支出金額", "借方", "付款", "Debit", "Dr", "Withdrawal Amount"
+            ])
+            deposit_idx = self._find_column_index(headers, [
+                "Deposit", "存入", "贷方金额", "收入", "存款", "收入金額", "贷方", "收款", "Credit", "Cr", "Deposit Amount"
+            ])
+            balance_idx = self._find_column_index(headers, [
+                "Balance", "余额", "账户余额", "餘額", "帳戶餘額", "Ledger Balance"
+            ])
+            remark_idx = self._find_column_index(headers, [
+                "Remark", "备注", "註記", "備註", "附註", "Notes"
+            ])
+            
+            # 处理数据行
+            for i in range(header_row + 1, len(table)):
+                row = table[i]
+                
+                # 跳过空行
+                if not row or all(not cell for cell in row):
+                    continue
+                
+                # 确保行长度与表头一致
+                if len(row) < len(headers):
+                    row.extend([None] * (len(headers) - len(row)))
+                
+                # 提取交易数据
+                transaction = {}
+                
+                # 添加账户信息
+                transaction.update(account_info)
+                
+                # 交易日期
+                if date_idx is not None and date_idx < len(row):
+                    transaction["交易日期"] = self.parse_date(row[date_idx])
+                
+                # 货币
+                if currency_idx is not None and currency_idx < len(row):
+                    transaction["货币"] = self.clean_text(row[currency_idx])
+                
+                # 交易描述
+                if desc_idx is not None and desc_idx < len(row):
+                    transaction["交易描述"] = self.clean_text(row[desc_idx])
+                
+                # 支出金额
+                if withdrawal_idx is not None and withdrawal_idx < len(row):
+                    withdrawal = self.parse_amount(row[withdrawal_idx])
+                    transaction["支出金额"] = withdrawal
+                
+                # 存入金额
+                if deposit_idx is not None and deposit_idx < len(row):
+                    deposit = self.parse_amount(row[deposit_idx])
+                    transaction["收入金额"] = deposit
+                
+                # 账户余额
+                if balance_idx is not None and balance_idx < len(row):
+                    transaction["账户余额"] = self.parse_amount(row[balance_idx])
+                
+                # 备注
+                if remark_idx is not None and remark_idx < len(row):
+                    transaction["备注"] = self.clean_text(row[remark_idx])
+                
+                # 添加到交易列表
+                if transaction.get("交易日期"):
+                    transactions.append(transaction)
+        
+        if not transactions:
+            logger.warning("未能从表格中提取到交易记录，尝试最后的文本分析方法")
+            # 最后尝试一次文本分析
+            transactions = self._extract_transactions_from_text(full_text)
+            # 添加账户信息到每个交易记录
+            for transaction in transactions:
+                transaction.update(account_info)
+        
+        return transactions
+    
+    def _extract_transactions_from_text(self, text):
+        """从文本中提取交易记录 - 增强版"""
+        transactions = []
+        
+        # 记录提取的文本，用于调试
+        logger.debug(f"正在从文本中提取交易记录，文本长度: {len(text)}")
+        
+        # 尝试查找 "Account Transaction History" 部分
+        history_match = re.search(r'Account Transaction History|帳戶交易歷史', text, re.IGNORECASE)
+        if history_match:
+            # 获取匹配位置之后的文本
+            start_pos = history_match.end()
+            relevant_text = text[start_pos:]
+            logger.debug(f"找到 'Account Transaction History' 关键字，提取后续文本进行分析")
+        else:
+            relevant_text = text
+        
+        # 尝试多种模式匹配交易记录
+        patterns = [
+            # 标准格式: 日期 货币 描述 金额
+            r'(\d{4}[/.-]\d{2}[/.-]\d{2})\s+(\w{3})\s+([^\n]+?)\s+([-+]?\d[\d,.]+)',
+            # 无货币格式: 日期 描述 金额
+            r'(\d{4}[/.-]\d{2}[/.-]\d{2})\s+([^\n]+?)\s+([-+]?\d[\d,.]+)',
+            # 繁体中文日期格式
+            r'(\d{4}年\d{2}月\d{2}日)\s+([^\n]+?)\s+([-+]?\d[\d,.]+)',
+            # 表格式文本: 多行匹配
+            r'(\d{4}[/.-]\d{2}[/.-]\d{2})\s+(\w{3})?\s*([^\n]+?)\s+([-+]?\d[\d,.]+)\s+([-+]?\d[\d,.]+)?',
+            # 日期 + 收入/支出 格式
+            r'(\d{4}[/.-]\d{2}[/.-]\d{2})\s+([^\n]+?)\s+(\d[\d,.]+)\s+(\d[\d,.]+)',
+            # 日期 + 货币 + 收入/支出 格式
+            r'(\d{4}[/.-]\d{2}[/.-]\d{2})\s+(\w{3})\s+([^\n]+?)\s+(\d[\d,.]+)\s+(\d[\d,.]+)'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, relevant_text)
+            if matches:
+                for match in matches:
+                    transaction = {}
+                    
+                    if len(match) >= 3:  # 至少有日期、描述、金额
+                        date = match[0]
+                        transaction["交易日期"] = self.parse_date(date)
+                        
+                        if len(match) >= 4 and match[1] and len(match[1]) == 3:  # 有货币字段
+                            currency = match[1]
+                            desc = match[2]
+                            amount = match[3]
+                            transaction["货币"] = currency
+                            transaction["交易描述"] = desc.strip()
+                            
+                            # 尝试判断是收入还是支出
+                            amount_value = self.parse_amount(amount)
+                            if amount_value < 0:
+                                transaction["支出金额"] = abs(amount_value)
+                                transaction["收入金额"] = 0.0
+                            else:
+                                transaction["收入金额"] = amount_value
+                                transaction["支出金额"] = 0.0
+                            
+                            # 如果有第5个元素，可能是余额
+                            if len(match) >= 5 and match[4]:
+                                transaction["账户余额"] = self.parse_amount(match[4])
+                        else:  # 无货币字段
+                            desc = match[1] if len(match) == 3 else match[2]
+                            amount = match[2] if len(match) == 3 else match[3]
+                            transaction["交易描述"] = desc.strip()
+                            
+                            # 尝试判断是收入还是支出
+                            amount_value = self.parse_amount(amount)
+                            if amount_value < 0:
+                                transaction["支出金额"] = abs(amount_value)
+                                transaction["收入金额"] = 0.0
+                            else:
+                                transaction["收入金额"] = amount_value
+                                transaction["支出金额"] = 0.0
+                        
+                        transactions.append(transaction)
+        
+        # 尝试查找表格式的文本
+        table_patterns = [
+            r'Transaction Date\s+Currency\s+Description\s+.*?\n((?:[^\n]+\n)+)',
+            r'交易日期\s+幣別\s+摘要\s+.*?\n((?:[^\n]+\n)+)',
+            r'日期\s+摘要\s+.*?金額\s+.*?\n((?:[^\n]+\n)+)',
+            r'Account Transaction History.*?\n((?:[^\n]+\n)+)',
+            r'帳戶交易歷史.*?\n((?:[^\n]+\n)+)'
+        ]
+        
+        for pattern in table_patterns:
+            match = re.search(pattern, relevant_text)
+            if match:
+                table_text = match.group(1)
+                # 按行分割
+                lines = table_text.strip().split('\n')
+                for line in lines:
+                    # 尝试从每行提取交易信息
+                    line_match = re.search(r'(\d{4}[/.-]\d{2}[/.-]\d{2})\s+(\w{3})?\s*([^\d]+)\s+([-+]?\d[\d,.]+)', line)
+                    if line_match:
+                        date = line_match.group(1)
+                        currency = line_match.group(2) if line_match.group(2) else ""
+                        desc = line_match.group(3)
+                        amount = line_match.group(4)
+                        
+                        transaction = {
+                            "交易日期": self.parse_date(date),
+                            "交易描述": desc.strip()
+                        }
+                        
+                        if currency:
+                            transaction["货币"] = currency
+                        
+                        # 尝试判断是收入还是支出
+                        amount_value = self.parse_amount(amount)
+                        if amount_value < 0:
+                            transaction["支出金额"] = abs(amount_value)
+                            transaction["收入金额"] = 0.0
+                        else:
+                            transaction["收入金额"] = amount_value
+                            transaction["支出金额"] = 0.0
+                        
+                        transactions.append(transaction)
+        
+        if transactions:
+            logger.info(f"通过文本分析成功提取到{len(transactions)}条交易记录")
+        else:
+            logger.warning("文本分析未能提取到任何交易记录")
+        
+        return transactions
+    
+    def _find_column_index(self, headers, possible_names):
+        """查找列索引 - 增强版，支持部分匹配"""
+        for name in possible_names:
+            for i, header in enumerate(headers):
+                # 完全匹配
+                if name == header:
+                    return i
+                # 部分匹配
+                if name in header:
+                    return i
+                # 忽略大小写的部分匹配
+                if name.lower() in header.lower():
+                    return i
+        return None
 
 # 通用解析器，用于未特别实现的银行
 class GenericParser(BankParser):
@@ -651,6 +980,7 @@ BANK_PARSERS = {
     "农业银行": ABCParser(),
     "中国银行": BOCParser(),
     "招商银行": CMBParser(),
+    "玉山银行": ESunBankParser(),
     # 其他银行使用通用解析器
     "交通银行": GenericParser(),
     "浦发银行": GenericParser(),
@@ -661,7 +991,6 @@ BANK_PARSERS = {
     "广发银行": GenericParser(),
     "平安银行": GenericParser(),
     "邮储银行": GenericParser(),
-    "玉山银行": GenericParser(),
     "渣打银行": GenericParser(),
     "汇丰银行": GenericParser(),
     "南洋银行": GenericParser(),

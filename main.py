@@ -583,23 +583,23 @@ class BankStatementApp(ThemedTk):
         try:
             # 按银行汇总
             bank_summary = df.groupby("银行").agg({
-                "收入": "sum",
-                "支出": "sum",
+                "收入金额": "sum",
+                "支出金额": "sum",
                 "交易日期": "count"
             }).rename(columns={"交易日期": "交易笔数"})
             
-            bank_summary["净收入"] = bank_summary["收入"] - bank_summary["支出"]
+            bank_summary["净收入"] = bank_summary["收入金额"] - bank_summary["支出金额"]
             bank_summary.to_excel(writer, sheet_name="银行汇总")
             
             # 按月汇总
             df["月份"] = pd.to_datetime(df["交易日期"]).dt.strftime("%Y-%m")
             month_summary = df.groupby("月份").agg({
-                "收入": "sum",
-                "支出": "sum",
+                "收入金额": "sum",
+                "支出金额": "sum",
                 "交易日期": "count"
             }).rename(columns={"交易日期": "交易笔数"})
             
-            month_summary["净收入"] = month_summary["收入"] - month_summary["支出"]
+            month_summary["净收入"] = month_summary["收入金额"] - month_summary["支出金额"]
             month_summary.to_excel(writer, sheet_name="月度汇总")
             
             self.queue.put(("log", "成功创建汇总表"))

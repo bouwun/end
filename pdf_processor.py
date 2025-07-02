@@ -28,7 +28,7 @@ class PDFProcessor:
             "广发银行": ["广发", "CGB", "China Guangfa Bank"],
             "平安银行": ["平安", "PAB", "Ping An Bank"],
             "邮储银行": ["中国邮政储蓄银行", "邮储", "PSBC", "Postal Savings Bank of China"],
-            "玉山银行": ["中国玉山银行", "玉山", "EBS", "Eastern Bank of Shandong"],
+            "玉山银行": ["玉山银行", "玉山", "E.SUN", "E. SUN", "E.SUN Bank", "E. SUN BANK", "E.SUN Commercial Bank", "E. SUN COMMERCIAL BANK", "ESUN", "ESUNHKHH", "玉山銀行"],
             "渣打银行": ["渣打", "SDB", "Shanghaidi Bank"],
             "汇丰银行": ["中国汇丰银行", "汇丰", "HSBC", "HongKong and Shanghai Banking Corporation"],
             "南洋银行": ["中国南洋银行", "南洋", "NBC", "National Bank of China"],
