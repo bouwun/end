@@ -29,11 +29,14 @@
 
 1. 确保已安装Python 3.7或更高版本
 2. 安装依赖包：
-   ```
+
+      ```bash
    pip install -r requirements.txt
-   ```
+      ```
+
 3. 运行主程序：
-   ```
+
+      ```bash
    python main.py
    ```
 

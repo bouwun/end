@@ -552,13 +552,23 @@ class BankStatementApp(ThemedTk):
         df = pd.DataFrame(all_results)
         
         # 标准化列名和顺序
-        columns = ["交易日期", "描述", "收入金额", "支出金额", "账户余额", "银行", "文件名"]
-        for col in columns:
+        columns_mapping = {
+            "交易描述": "说明",
+            "货币": "币别",
+            "账户余额": "余额"
+        }
+        
+        # 重命名列
+        df = df.rename(columns=columns_mapping)
+        
+        # 确保所有需要的列都存在
+        required_columns = ["交易日期", "币别", "说明", "支出金额", "收入金额", "余额", "备注", "银行", "文件名"]
+        for col in required_columns:
             if col not in df.columns:
                 df[col] = ""
         
         # 选择需要的列并排序
-        df = df[columns]
+        df = df[required_columns]
         
         # 根据文件扩展名决定保存格式
         file_ext = os.path.splitext(self.output_file)[1].lower()
@@ -570,8 +580,20 @@ class BankStatementApp(ThemedTk):
         else:
             # 保存为Excel
             with pd.ExcelWriter(self.output_file, engine="openpyxl") as writer:
-                # 写入明细表
+                # 写入总明细表
                 df.to_excel(writer, sheet_name="交易明细", index=False)
+                
+                # 按账户类型分sheet保存
+                account_types = df["账户类型"].unique()
+                for acc_type in account_types:
+                    if pd.notna(acc_type) and acc_type != "":
+                        # 过滤出当前账户类型的交易记录
+                        acc_df = df[df["账户类型"] == acc_type]
+                        if not acc_df.empty:
+                            # 生成有效的sheet名称（Excel限制sheet名长度为31个字符）
+                            sheet_name = str(acc_type)[:30]
+                            acc_df[display_columns].to_excel(writer, sheet_name=sheet_name, index=False)
+                            self.queue.put(("log", f"创建账户类型 '{acc_type}' 的明细表，包含 {len(acc_df)} 条记录"))
                 
                 # 创建汇总表
                 self.create_summary_tables(df, writer)
@@ -601,6 +623,17 @@ class BankStatementApp(ThemedTk):
             
             month_summary["净收入"] = month_summary["收入金额"] - month_summary["支出金额"]
             month_summary.to_excel(writer, sheet_name="月度汇总")
+            
+            # 按币别汇总
+            if "币别" in df.columns and df["币别"].notna().any():
+                currency_summary = df.groupby("币别").agg({
+                    "收入金额": "sum",
+                    "支出金额": "sum",
+                    "交易日期": "count"
+                }).rename(columns={"交易日期": "交易笔数"})
+                
+                currency_summary["净收入"] = currency_summary["收入金额"] - currency_summary["支出金额"]
+                currency_summary.to_excel(writer, sheet_name="币别汇总")
             
             self.queue.put(("log", "成功创建汇总表"))
             

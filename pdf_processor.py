@@ -20,11 +20,6 @@ class PDFProcessor:
             "南洋银行": ["中国南洋银行", "南洋", "NBC", "National Bank of China"],
             "恒生银行": ["中国恒生银行", "恒生", "HSBC", "HongKong and Shanghai Banking Corporation"],
             "中银香港": ["中国中银香港", "中银", "HSBC", "HongKong and Shanghai Banking Corporation"],
-            "渣打银行": ["渣打", "SDB", "Shanghaidi Bank"],
-            "汇丰银行": ["中国汇丰银行", "汇丰", "HSBC", "HongKong and Shanghai Banking Corporation"],
-            "南洋银行": ["中国南洋银行", "南洋", "NBC", "National Bank of China"],
-            "恒生银行": ["中国恒生银行", "恒生", "HSBC", "HongKong and Shanghai Banking Corporation"],
-            "中银香港": ["中国中银香港", "中银", "HSBC", "HongKong and Shanghai Banking Corporation"],
             "东亚银行": ["东亚银行", "东亚", "Eastern Asia Bank"]
         }
     
@@ -111,17 +106,24 @@ class PDFProcessor:
         try:
             # 打开PDF文件
             with pdfplumber.open(pdf_path) as pdf:
-                # 调用银行特定的解析器处理PDF
-                transactions = bank_parser.parse(pdf)
+                # 使用银行解析器提取交易记录
+                if hasattr(bank_parser, 'parse') and callable(bank_parser.parse):
+                    # 检查parse方法的返回值类型
+                    result = bank_parser.parse(pdf)
+                    
+                    # 如果返回元组，说明是新版解析器，返回了按账户类型分组的交易记录
+                    if isinstance(result, tuple) and len(result) == 2:
+                        transactions, account_type_transactions = result
+                        return transactions
+                    else:
+                        # 旧版解析器，只返回了交易记录列表
+                        return result
+                else:
+                    raise ValueError(f"提供的银行解析器 {type(bank_parser).__name__} 没有实现parse方法")
                 
-                # 标准化交易记录
-                standardized_transactions = self.standardize_transactions(transactions)
-                
-                return standardized_transactions
-        
         except Exception as e:
-            logger.exception(f"处理PDF文件时出错: {str(e)}")
-            raise
+            logger.exception(f"处理PDF文件 {pdf_path} 时出错: {str(e)}")
+            raise PDFProcessingError(f"处理PDF文件时出错: {str(e)}")
     
     def standardize_transactions(self, transactions):
         """标准化交易记录格式"""

@@ -92,6 +92,7 @@ class ESunBankParser(BankParser):
     def parse(self, pdf):
         transactions = []
         account_info = {}
+        account_type_transactions = {}  # 用于存储不同账户类型的交易记录
         
         # 提取表格
         tables = self.extract_tables(pdf)
@@ -106,172 +107,95 @@ class ESunBankParser(BankParser):
         logger.debug(f"提取的文本内容: {full_text[:500]}...")
         
         # 尝试提取账户信息 - 同时支持英文和繁体中文
-        account_match = re.search(r'Account No\.\s*:\s*([\d\w]+)|帳戶號碼\s*:\s*([\d\w]+)', full_text)
+        account_match = re.search(r'Account No\.\s*:\s*([\d\w]+)|帐戶號碼\s*:\s*([\d\w]+)', full_text)
         if account_match:
             account_info['账户号码'] = account_match.group(1) or account_match.group(2)
         
-        account_type_match = re.search(r'Account Type\s*:\s*([^\n]+)|帳戶類型\s*:\s*([^\n]+)', full_text)
-        if account_type_match:
-            account_info['账户类型'] = account_type_match.group(1) or account_type_match.group(2)
+        # 查找所有账户类型
+        account_types = ["Savings Account", "Current Account", "Time Deposit", "Foreign Currency", 
+                       "活期存款", "定期存款", "外幣帳戶", "支票帳戶"]
         
-        # 查找 "Account Transaction History" 关键字
-        account_history_match = re.search(r'Account Transaction History|帳戶交易歷史', full_text, re.IGNORECASE)
-        if account_history_match:
-            logger.info("找到 'Account Transaction History' 关键字")
-            
-            # 尝试识别账户类型
-            account_types = ["Savings Account", "Current Account", "Time Deposit", "Foreign Currency", 
-                           "活期存款", "定期存款", "外幣帳戶", "支票帳戶"]
-            
-            detected_account_type = None
-            for acc_type in account_types:
-                if acc_type.lower() in full_text.lower():
-                    detected_account_type = acc_type
-                    logger.info(f"检测到账户类型: {detected_account_type}")
-                    account_info['账户类型'] = detected_account_type
-                    break
+        # 查找所有 "Account Transaction History" 关键字位置
+        # 使用更灵活的正则表达式，处理可能存在的空格问题
+        history_matches = list(re.finditer(r'Account\s+Transaction\s+History|帳戶\s*交易\s*歷史', full_text, re.IGNORECASE))
         
-        # 如果没有找到表格，尝试使用文本分析
-        if not tables:
-            logger.warning("未能从PDF中提取到表格，尝试使用文本分析")
+        if history_matches:
+            logger.info(f"找到 {len(history_matches)} 个 'Account Transaction History' 关键字")
             
-            # 尝试从文本中提取交易记录
-            transactions = self._extract_transactions_from_text(full_text)
-            if transactions:
-                # 添加账户信息到每个交易记录
-                for transaction in transactions:
-                    transaction.update(account_info)
-                logger.info(f"通过文本分析成功提取到{len(transactions)}条交易记录")
-                return transactions
+            # 处理每个Account Transaction History部分
+            for i, history_match in enumerate(history_matches):
+                start_pos = history_match.end()
+                end_pos = len(full_text)
+                
+                # 如果有下一个匹配，则当前部分到下一个匹配开始
+                if i < len(history_matches) - 1:
+                    end_pos = history_matches[i+1].start()
+                
+                section_text = full_text[start_pos:end_pos]
+                
+                # 尝试识别该部分的账户类型
+                detected_account_type = None
+                for acc_type in account_types:
+                    # 在当前部分或前面一小段文本中查找账户类型
+                    search_text = full_text[max(0, start_pos-200):start_pos] + section_text[:200]
+                    if acc_type.lower() in search_text.lower():
+                        detected_account_type = acc_type
+                        logger.info(f"在第 {i+1} 个 'Account Transaction History' 部分检测到账户类型: {detected_account_type}")
+                        break
+                
+                if not detected_account_type:
+                    detected_account_type = f"未知账户类型_{i+1}"
+                    logger.warning(f"无法识别第 {i+1} 个 'Account Transaction History' 部分的账户类型，使用默认值: {detected_account_type}")
+                
+                # 处理该部分的表格或文本
+                section_transactions = self._process_account_section(tables, section_text, detected_account_type)
+                
+                if section_transactions:
+                    # 添加账户信息和类型到每个交易记录
+                    for transaction in section_transactions:
+                        transaction.update(account_info)
+                        transaction['账户类型'] = detected_account_type
+                    
+                    # 添加到对应账户类型的交易记录列表
+                    if detected_account_type not in account_type_transactions:
+                        account_type_transactions[detected_account_type] = []
+                    account_type_transactions[detected_account_type].extend(section_transactions)
+                    
+                    # 同时添加到总交易记录列表
+                    transactions.extend(section_transactions)
         
-        # 处理提取到的表格
-        for table_info in tables:
-            table = table_info['data']
-            page_num = table_info['page']
-            
-            # 跳过空表格
-            if not table or len(table) <= 1:
-                continue
-            
-            # 查找表头行
-            header_row = None
-            for i, row in enumerate(table):
-                row_text = " ".join([str(cell) for cell in row if cell])
-                # 增加更多可能的表头标识，包括繁体中文和 "Account Transaction History" 相关标识
-                if ("Transaction" in row_text and "Date" in row_text) or \
-                   "交易日期" in row_text or \
-                   "交易日" in row_text or \
-                   "Transaction Date" in row_text or \
-                   "Date" in row_text or \
-                   "Currency" in row_text or \
-                   "Description" in row_text or \
-                   "Withdrawal" in row_text or \
-                   "Deposit" in row_text or \
-                   "Balance" in row_text or \
-                   "幣別" in row_text or \
-                   "摘要" in row_text or \
-                   "提款" in row_text or \
-                   "存款" in row_text or \
-                   "餘額" in row_text or \
-                   "Account Transaction History" in row_text or \
-                   "帳戶交易歷史" in row_text:
-                    header_row = i
-                    break
-            
-            if header_row is None:
-                # 如果找不到表头，尝试使用第一行作为表头
-                if len(table) > 1:
-                    header_row = 0
-                else:
-                    continue
-            
-            # 解析表头
-            headers = [self.clean_text(cell) for cell in table[header_row]]
-            
-            # 查找关键列索引 - 增加繁体中文支持
-            date_idx = self._find_column_index(headers, [
-                "Transaction Date", "交易日期", "日期", "Date", "Transaction", "交易日", "Value Date", "入帳日"
-            ])
-            currency_idx = self._find_column_index(headers, [
-                "Currency", "币别", "货币", "幣別", "幣種", "币种", "Ccy"
-            ])
-            desc_idx = self._find_column_index(headers, [
-                "Description", "摘要", "交易描述", "Value Date", "摘要", "交易說明", "備註", "附註", "Particulars"
-            ])
-            withdrawal_idx = self._find_column_index(headers, [
-                "Withdrawal", "支出", "借方金额", "支出", "提款", "支出金額", "借方", "付款", "Debit", "Dr", "Withdrawal Amount"
-            ])
-            deposit_idx = self._find_column_index(headers, [
-                "Deposit", "存入", "贷方金额", "收入", "存款", "收入金額", "贷方", "收款", "Credit", "Cr", "Deposit Amount"
-            ])
-            balance_idx = self._find_column_index(headers, [
-                "Balance", "余额", "账户余额", "餘額", "帳戶餘額", "Ledger Balance"
-            ])
-            remark_idx = self._find_column_index(headers, [
-                "Remark", "备注", "註記", "備註", "附註", "Notes"
-            ])
-            
-            # 处理数据行
-            for i in range(header_row + 1, len(table)):
-                row = table[i]
-                
-                # 跳过空行
-                if not row or all(not cell for cell in row):
-                    continue
-                
-                # 确保行长度与表头一致
-                if len(row) < len(headers):
-                    row.extend([None] * (len(headers) - len(row)))
-                
-                # 提取交易数据
-                transaction = {}
-                
-                # 添加账户信息
-                transaction.update(account_info)
-                
-                # 交易日期
-                if date_idx is not None and date_idx < len(row):
-                    transaction["交易日期"] = self.parse_date(row[date_idx])
-                
-                # 货币
-                if currency_idx is not None and currency_idx < len(row):
-                    transaction["货币"] = self.clean_text(row[currency_idx])
-                
-                # 交易描述
-                if desc_idx is not None and desc_idx < len(row):
-                    transaction["交易描述"] = self.clean_text(row[desc_idx])
-                
-                # 支出金额
-                if withdrawal_idx is not None and withdrawal_idx < len(row):
-                    withdrawal = self.parse_amount(row[withdrawal_idx])
-                    transaction["支出金额"] = withdrawal
-                
-                # 存入金额
-                if deposit_idx is not None and deposit_idx < len(row):
-                    deposit = self.parse_amount(row[deposit_idx])
-                    transaction["收入金额"] = deposit
-                
-                # 账户余额
-                if balance_idx is not None and balance_idx < len(row):
-                    transaction["账户余额"] = self.parse_amount(row[balance_idx])
-                
-                # 备注
-                if remark_idx is not None and remark_idx < len(row):
-                    transaction["备注"] = self.clean_text(row[remark_idx])
-                
-                # 添加到交易列表
-                if transaction.get("交易日期"):
-                    transactions.append(transaction)
-        
+        # 如果没有找到任何Account Transaction History部分，尝试处理整个文档
         if not transactions:
-            logger.warning("未能从表格中提取到交易记录，尝试最后的文本分析方法")
-            # 最后尝试一次文本分析
-            transactions = self._extract_transactions_from_text(full_text)
-            # 添加账户信息到每个交易记录
-            for transaction in transactions:
-                transaction.update(account_info)
+            logger.warning("未找到 'Account Transaction History' 部分，尝试处理整个文档")
+            
+            # 尝试从表格中提取
+            table_transactions = self._process_tables(tables)
+            if table_transactions:
+                # 添加账户信息到每个交易记录
+                for transaction in table_transactions:
+                    transaction.update(account_info)
+                    # 如果没有指定账户类型，使用默认值
+                    if '账户类型' not in transaction:
+                        transaction['账户类型'] = "未知账户类型"
+                
+                transactions.extend(table_transactions)
+            
+            # 如果表格提取失败，尝试从文本中提取
+            if not transactions:
+                logger.warning("未能从表格中提取到交易记录，尝试使用文本分析")
+                text_transactions = self._extract_transactions_from_text(full_text)
+                
+                # 添加账户信息到每个交易记录
+                for transaction in text_transactions:
+                    transaction.update(account_info)
+                    # 如果没有指定账户类型，使用默认值
+                    if '账户类型' not in transaction:
+                        transaction['账户类型'] = "未知账户类型"
+                
+                transactions.extend(text_transactions)
         
-        return transactions
+        # 返回所有交易记录和按账户类型分组的交易记录
+        return transactions, account_type_transactions
     
     def _extract_transactions_from_text(self, text):
         """从文本中提取交易记录 - 增强版"""
@@ -539,3 +463,170 @@ def get_bank_parser(bank_name):
 def get_supported_banks():
     """获取支持的银行列表"""
     return list(BANK_PARSERS.keys())
+
+    def _process_account_section(self, tables, section_text, account_type):
+        """处理特定账户类型的部分"""
+        transactions = []
+        
+        # 首先尝试从表格中提取
+        # 查找与该部分相关的表格
+        relevant_tables = []
+        for table_info in tables:
+            table = table_info['data']
+            page_num = table_info['page']
+            
+            # 简单判断表格是否属于当前部分（可以根据实际情况优化）
+            table_text = "\n".join([" ".join([str(cell) for cell in row if cell]) for row in table])
+            if account_type.lower() in table_text.lower() or any(keyword in table_text for keyword in ["Transaction Date", "交易日期", "Date", "Currency"]):
+                relevant_tables.append(table_info)
+        
+        # 处理相关表格
+        if relevant_tables:
+            for table_info in relevant_tables:
+                table_transactions = self._process_table(table_info, account_type)
+                if table_transactions:
+                    transactions.extend(table_transactions)
+        
+        # 如果表格提取失败，尝试从文本中提取
+        if not transactions:
+            text_transactions = self._extract_transactions_from_text(section_text)
+            if text_transactions:
+                # 添加账户类型
+                for transaction in text_transactions:
+                    transaction['账户类型'] = account_type
+                transactions.extend(text_transactions)
+        
+        return transactions
+    
+    def _process_table(self, table_info, account_type):
+        """处理单个表格"""
+        transactions = []
+        table = table_info['data']
+        page_num = table_info['page']
+        
+        # 跳过空表格
+        if not table or len(table) <= 1:
+            return transactions
+        
+        # 查找表头行
+        header_row = None
+        for i, row in enumerate(table):
+            row_text = " ".join([str(cell) for cell in row if cell])
+            # 增加更多可能的表头标识
+            if ("Transaction" in row_text and "Date" in row_text) or \
+               "交易日期" in row_text or \
+               "交易日" in row_text or \
+               "Transaction Date" in row_text or \
+               "Date" in row_text or \
+               "Currency" in row_text or \
+               "Description" in row_text or \
+               "Withdrawal" in row_text or \
+               "Deposit" in row_text or \
+               "Balance" in row_text or \
+               "幣別" in row_text or \
+               "摘要" in row_text or \
+               "提款" in row_text or \
+               "存款" in row_text or \
+               "餘額" in row_text or \
+               "Account Transaction History" in row_text or \
+               "帳戶交易歷史" in row_text:
+                header_row = i
+                break
+        
+        if header_row is None:
+            # 如果找不到表头，尝试使用第一行作为表头
+            if len(table) > 1:
+                header_row = 0
+            else:
+                return transactions
+        
+        # 解析表头
+        headers = [self.clean_text(cell) for cell in table[header_row]]
+        
+        # 查找关键列索引 - 增加繁体中文支持
+        date_idx = self._find_column_index(headers, [
+            "Transaction Date", "交易日期", "日期", "Date", "Transaction", "交易日", "Value Date", "入帳日"
+        ])
+        currency_idx = self._find_column_index(headers, [
+            "Currency", "币别", "货币", "幣別", "幣種", "币种", "Ccy"
+        ])
+        desc_idx = self._find_column_index(headers, [
+            "Description", "摘要", "交易描述", "Value Date", "摘要", "交易說明", "備註", "附註", "Particulars"
+        ])
+        withdrawal_idx = self._find_column_index(headers, [
+            "Withdrawal", "支出", "借方金额", "支出", "提款", "支出金額", "借方", "付款", "Debit", "Dr", "Withdrawal Amount"
+        ])
+        deposit_idx = self._find_column_index(headers, [
+            "Deposit", "存入", "贷方金额", "收入", "存款", "收入金額", "贷方", "收款", "Credit", "Cr", "Deposit Amount"
+        ])
+        balance_idx = self._find_column_index(headers, [
+            "Balance", "余额", "账户余额", "餘額", "帳戶餘額", "Ledger Balance"
+        ])
+        remark_idx = self._find_column_index(headers, [
+            "Remark", "备注", "註記", "備註", "附註", "Notes"
+        ])
+        
+        # 处理数据行
+        for i in range(header_row + 1, len(table)):
+            row = table[i]
+            
+            # 跳过空行
+            if not row or all(not cell for cell in row):
+                continue
+            
+            # 确保行长度与表头一致
+            if len(row) < len(headers):
+                row.extend([None] * (len(headers) - len(row)))
+            
+            # 提取交易数据
+            transaction = {}
+            
+            # 添加账户类型
+            transaction['账户类型'] = account_type
+            
+            # 交易日期
+            if date_idx is not None and date_idx < len(row):
+                transaction["交易日期"] = self.parse_date(row[date_idx])
+            
+            # 货币
+            if currency_idx is not None and currency_idx < len(row):
+                transaction["货币"] = self.clean_text(row[currency_idx])
+            
+            # 交易描述
+            if desc_idx is not None and desc_idx < len(row):
+                transaction["交易描述"] = self.clean_text(row[desc_idx])
+            
+            # 支出金额
+            if withdrawal_idx is not None and withdrawal_idx < len(row):
+                withdrawal = self.parse_amount(row[withdrawal_idx])
+                transaction["支出金额"] = withdrawal
+            
+            # 存入金额
+            if deposit_idx is not None and deposit_idx < len(row):
+                deposit = self.parse_amount(row[deposit_idx])
+                transaction["收入金额"] = deposit
+            
+            # 账户余额
+            if balance_idx is not None and balance_idx < len(row):
+                transaction["账户余额"] = self.parse_amount(row[balance_idx])
+            
+            # 备注
+            if remark_idx is not None and remark_idx < len(row):
+                transaction["备注"] = self.clean_text(row[remark_idx])
+            
+            # 添加到交易列表
+            if transaction.get("交易日期"):
+                transactions.append(transaction)
+        
+        return transactions
+    
+    def _process_tables(self, tables):
+        """处理所有表格"""
+        transactions = []
+        
+        for table_info in tables:
+            table_transactions = self._process_table(table_info, "未知账户类型")
+            if table_transactions:
+                transactions.extend(table_transactions)
+        
+        return transactions
