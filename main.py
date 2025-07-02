@@ -153,6 +153,17 @@ class BankStatementApp(ThemedTk):
                                             command=self.select_output_file,
                                             tooltip="选择输出的Excel文件路径")
         self.select_output_btn.pack(side=tk.LEFT, padx=5)
+
+        # 添加选择文件夹按钮
+        self.select_folder_btn = ToolTipButton(btn_frame, text="选择文件夹", 
+                                           command=self.select_pdf_folder,
+                                           tooltip="选择包含银行账单PDF文件的文件夹")
+        self.select_folder_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.select_output_btn = ToolTipButton(btn_frame, text="选择输出文件", 
+                                            command=self.select_output_file,
+                                            tooltip="选择输出的Excel文件路径")
+        self.select_output_btn.pack(side=tk.LEFT, padx=5)
         
         self.process_btn = ToolTipButton(btn_frame, text="开始处理", 
                                        command=self.start_processing,
@@ -164,7 +175,7 @@ class BankStatementApp(ThemedTk):
                                     tooltip="停止当前处理任务",
                                     state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT, padx=5)
-        
+
         # 添加批量操作按钮
         self.batch_detect_btn = ToolTipButton(btn_frame, text="重新检测银行", 
                                            command=self.batch_detect_bank_type,
@@ -283,6 +294,96 @@ class BankStatementApp(ThemedTk):
             # 更新状态
             self.status_label.config(text=f"已添加 {len(self.pdf_files)} 个文件")
     
+    def select_pdf_folder(self):
+        """选择包含PDF文件的文件夹"""
+        folder_path = filedialog.askdirectory(
+            title="选择包含银行账单PDF文件的文件夹",
+            initialdir=self.app_config.get("last_pdf_dir", os.path.expanduser("~"))
+        )
+        
+        if not folder_path:
+            return
+            
+        # 保存最后的目录
+        self.app_config["last_pdf_dir"] = folder_path
+        save_config(self.app_config)
+        
+        # 询问是否清空现有文件列表
+        clear_existing = True
+        if self.pdf_files:
+            clear_existing = messagebox.askyesno("确认", "是否清空当前文件列表？")
+        
+        # 清空现有文件列表
+        if clear_existing:
+            for item in self.file_tree.get_children():
+                self.file_tree.delete(item)
+            self.pdf_files = []
+        
+        # 递归查找所有PDF文件
+        self.log(f"正在扫描文件夹: {folder_path}")
+        pdf_files = self.find_pdf_files(folder_path)
+        
+        if not pdf_files:
+            messagebox.showinfo("提示", "所选文件夹中未找到PDF文件")
+            return
+        
+        # 添加找到的PDF文件
+        processor = PDFProcessor()
+        added_count = 0
+        
+        for file_path in pdf_files:
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
+            file_size_str = self.format_file_size(file_size)
+            
+            # 检测银行类型
+            try:
+                bank_name = processor.detect_bank_type(file_path, self.bank_mapping)
+                
+                # 添加到列表
+                self.file_tree.insert("", tk.END, values=(file_name, bank_name, "待处理", file_size_str))
+                
+                # 添加到文件列表
+                self.pdf_files.append({
+                    "name": file_name,
+                    "path": file_path,
+                    "bank": bank_name,
+                    "size": file_size
+                })
+                
+                added_count += 1
+                self.log(f"添加文件: {file_name}，检测到银行类型: {bank_name}，大小: {file_size_str}")
+                
+            except Exception as e:
+                # 添加到列表，但标记为未知银行
+                self.file_tree.insert("", tk.END, values=(file_name, "未知", "待处理", file_size_str))
+                
+                # 添加到文件列表
+                self.pdf_files.append({
+                    "name": file_name,
+                    "path": file_path,
+                    "bank": "未知",
+                    "size": file_size
+                })
+                
+                added_count += 1
+                self.log(f"添加文件: {file_name}，无法检测银行类型: {str(e)}，大小: {file_size_str}")
+        
+        # 更新状态
+        self.status_label.config(text=f"已添加 {len(self.pdf_files)} 个文件")
+        messagebox.showinfo("完成", f"已从文件夹添加 {added_count} 个PDF文件")
+    
+    def find_pdf_files(self, folder_path):
+        """递归查找文件夹中的所有PDF文件"""
+        pdf_files = []
+        
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                if file.lower().endswith(".pdf"):
+                    pdf_files.append(os.path.join(root, file))
+        
+        return pdf_files
+        
     def format_file_size(self, size_bytes):
         """格式化文件大小"""
         if size_bytes < 1024:

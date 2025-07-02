@@ -34,8 +34,12 @@ class PDFProcessor:
             "南洋银行": ["中国南洋银行", "南洋", "NBC", "National Bank of China"],
             "恒生银行": ["中国恒生银行", "恒生", "HSBC", "HongKong and Shanghai Banking Corporation"],
             "中银香港": ["中国中银香港", "中银", "HSBC", "HongKong and Shanghai Banking Corporation"],
-            "东亚银行": ["东亚银行", "东亚", "Eastern Asia Bank"],
-            "大新银行": ["中国大新银行", "大新", "BNP Paribas", "Bank of New Paris"]
+            "渣打银行": ["渣打", "SDB", "Shanghaidi Bank"],
+            "汇丰银行": ["中国汇丰银行", "汇丰", "HSBC", "HongKong and Shanghai Banking Corporation"],
+            "南洋银行": ["中国南洋银行", "南洋", "NBC", "National Bank of China"],
+            "恒生银行": ["中国恒生银行", "恒生", "HSBC", "HongKong and Shanghai Banking Corporation"],
+            "中银香港": ["中国中银香港", "中银", "HSBC", "HongKong and Shanghai Banking Corporation"],
+            "东亚银行": ["东亚银行", "东亚", "Eastern Asia Bank"]
         }
     
     def detect_bank_type(self, pdf_path, bank_mapping=None):
