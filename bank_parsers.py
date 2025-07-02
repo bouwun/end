@@ -519,22 +519,8 @@ class GenericParser(BankParser):
 
 # 银行解析器映射
 BANK_PARSERS = {
-    "工商银行": ICBCParser(),
-    "建设银行": CCBParser(),
-    "农业银行": ABCParser(),
-    "中国银行": BOCParser(),
-    "招商银行": CMBParser(),
     "玉山银行": ESunBankParser(),
     # 其他银行使用通用解析器
-    "交通银行": GenericParser(),
-    "浦发银行": GenericParser(),
-    "民生银行": GenericParser(),
-    "中信银行": GenericParser(),
-    "光大银行": GenericParser(),
-    "华夏银行": GenericParser(),
-    "广发银行": GenericParser(),
-    "平安银行": GenericParser(),
-    "邮储银行": GenericParser(),
     "渣打银行": GenericParser(),
     "汇丰银行": GenericParser(),
     "南洋银行": GenericParser(),
