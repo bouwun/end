@@ -395,17 +395,17 @@ class AdvancedSettingsDialog(tk.Toplevel):
         self.export_format_var = tk.StringVar(value=self.config.get("default_export_format", "xlsx"))
         ttk.Combobox(export_frame, textvariable=self.export_format_var, values=["xlsx", "csv"], width=10).grid(row=0, column=1, sticky=tk.W, pady=(0, 5))
         
-        # 包含汇总表
-        self.include_summary_var = tk.BooleanVar(value=self.config.get("include_summary", True))
-        ttk.Checkbutton(export_frame, text="包含汇总表", variable=self.include_summary_var).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        # 移除汇总表相关选项
+        # self.include_summary_var = tk.BooleanVar(value=self.config.get("include_summary", True))
+        # ttk.Checkbutton(export_frame, text="包含汇总表", variable=self.include_summary_var).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
         
-        # 包含银行汇总
-        self.include_bank_summary_var = tk.BooleanVar(value=self.config.get("include_bank_summary", True))
-        ttk.Checkbutton(export_frame, text="包含银行汇总", variable=self.include_bank_summary_var).grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        # 移除银行汇总选项
+        # self.include_bank_summary_var = tk.BooleanVar(value=self.config.get("include_bank_summary", True))
+        # ttk.Checkbutton(export_frame, text="包含银行汇总", variable=self.include_bank_summary_var).grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
         
-        # 包含月度汇总
-        self.include_month_summary_var = tk.BooleanVar(value=self.config.get("include_month_summary", True))
-        ttk.Checkbutton(export_frame, text="包含月度汇总", variable=self.include_month_summary_var).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        # 移除月度汇总选项
+        # self.include_month_summary_var = tk.BooleanVar(value=self.config.get("include_month_summary", True))
+        # ttk.Checkbutton(export_frame, text="包含月度汇总", variable=self.include_month_summary_var).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
         
         # 按钮框架
         btn_frame = ttk.Frame(self, padding="10")
@@ -425,16 +425,13 @@ class AdvancedSettingsDialog(tk.Toplevel):
             "save_log": self.save_log_var.get(),
             "show_processing_time": self.show_time_var.get(),
             "default_export_format": self.export_format_var.get(),
-            "include_summary": self.include_summary_var.get(),
-            "include_bank_summary": self.include_bank_summary_var.get(),
-            "include_month_summary": self.include_month_summary_var.get()
+            # 移除汇总表相关选项
+            # "include_summary": self.include_summary_var.get(),
+            # "include_bank_summary": self.include_bank_summary_var.get(),
+            # "include_month_summary": self.include_month_summary_var.get()
         }
         
         self.result = settings
-        self.destroy()
-    
-    def on_cancel(self):
-        """取消按钮事件"""
         self.destroy()
     
     def reset_defaults(self):
@@ -445,6 +442,16 @@ class AdvancedSettingsDialog(tk.Toplevel):
         self.save_log_var.set(True)
         self.show_time_var.set(True)
         self.export_format_var.set("xlsx")
-        self.include_summary_var.set(True)
-        self.include_bank_summary_var.set(True)
-        self.include_month_summary_var.set(True)
+        # 移除汇总表相关选项的默认值设置
+        # self.include_summary_var.set(True)
+        # self.include_bank_summary_var.set(True)
+        # self.include_month_summary_var.set(True)
+        ttk.Checkbutton(export_frame, text="包含月度汇总", variable=self.include_month_summary_var).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        
+        # 按钮框架
+        btn_frame = ttk.Frame(self, padding="10")
+        btn_frame.pack(fill=tk.X)
+        
+        # 确定取消按钮
+        ttk.Button(btn_frame, text="确定", command=self.on_ok).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(btn_frame, text="取消", command=self.on_cancel).pack(side=tk.RIGHT, padx=5)

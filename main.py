@@ -595,8 +595,8 @@ class BankStatementApp(ThemedTk):
                             acc_df[display_columns].to_excel(writer, sheet_name=sheet_name, index=False)
                             self.queue.put(("log", f"创建账户类型 '{acc_type}' 的明细表，包含 {len(acc_df)} 条记录"))
                 
-                # 创建汇总表
-                self.create_summary_tables(df, writer)
+                # 不再创建汇总表
+                # self.create_summary_tables(df, writer)
             
             self.queue.put(("log", f"成功保存结果到Excel文件: {self.output_file}"))
     
