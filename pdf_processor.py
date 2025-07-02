@@ -27,7 +27,15 @@ class PDFProcessor:
             "华夏银行": ["华夏", "HXB", "Huaxia Bank"],
             "广发银行": ["广发", "CGB", "China Guangfa Bank"],
             "平安银行": ["平安", "PAB", "Ping An Bank"],
-            "邮储银行": ["中国邮政储蓄银行", "邮储", "PSBC", "Postal Savings Bank of China"]
+            "邮储银行": ["中国邮政储蓄银行", "邮储", "PSBC", "Postal Savings Bank of China"],
+            "玉山银行": ["中国玉山银行", "玉山", "EBS", "Eastern Bank of Shandong"],
+            "渣打银行": ["渣打", "SDB", "Shanghaidi Bank"],
+            "汇丰银行": ["中国汇丰银行", "汇丰", "HSBC", "HongKong and Shanghai Banking Corporation"],
+            "南洋银行": ["中国南洋银行", "南洋", "NBC", "National Bank of China"],
+            "恒生银行": ["中国恒生银行", "恒生", "HSBC", "HongKong and Shanghai Banking Corporation"],
+            "中银香港": ["中国中银香港", "中银", "HSBC", "HongKong and Shanghai Banking Corporation"],
+            "东亚银行": ["东亚银行", "东亚", "Eastern Asia Bank"],
+            "大新银行": ["中国大新银行", "大新", "BNP Paribas", "Bank of New Paris"]
         }
     
     def detect_bank_type(self, pdf_path, bank_mapping=None):
@@ -36,6 +44,13 @@ class PDFProcessor:
             # 提取PDF文件的前几页文本用于识别
             text = self.extract_text_from_pdf(pdf_path, max_pages=2)
             
+            # 首先检查用户自定义的映射
+            if bank_mapping:
+                for bank_name, keywords in bank_mapping.items():
+                    for keyword in keywords:
+                        if keyword.lower() in text.lower():
+                            return bank_name
+            
             # 使用模糊匹配找出最可能的银行
             best_match = None
             best_score = 0
@@ -43,8 +58,8 @@ class PDFProcessor:
             for bank_name, keywords in self.bank_keywords.items():
                 # 计算文本与每个关键词的匹配度
                 for keyword in keywords:
-                    # 直接检查关键词是否在文本中
-                    if keyword in text:
+                    # 直接检查关键词是否在文本中（不区分大小写）
+                    if keyword.lower() in text.lower():
                         return bank_name
                     
                     # 使用模糊匹配计算相似度
@@ -71,14 +86,31 @@ class PDFProcessor:
             logger.error(f"检测银行类型时出错: {str(e)}")
             return "未知"
     
-    def extract_text_from_pdf(self, pdf_path, max_pages=None):
-        """从PDF文件中提取文本"""
+    def extract_text_from_pdf(self, pdf_path, max_pages=None, page_numbers=None):
+        """从PDF文件中提取文本
+        
+        Args:
+            pdf_path: PDF文件路径
+            max_pages: 最大页数限制
+            page_numbers: 指定页码列表，如果提供则忽略max_pages
+            
+        Returns:
+            提取的文本字符串
+        """
         text = ""
         try:
             with pdfplumber.open(pdf_path) as pdf:
-                pages_to_extract = pdf.pages[:max_pages] if max_pages else pdf.pages
+                # 确定要处理的页面
+                if page_numbers:
+                    pages_to_extract = [pdf.pages[i] for i in page_numbers if i < len(pdf.pages)]
+                else:
+                    pages_to_extract = pdf.pages[:max_pages] if max_pages else pdf.pages
+                
+                # 提取文本
                 for page in pages_to_extract:
-                    text += page.extract_text() or ""
+                    page_text = page.extract_text() or ""
+                    text += page_text + "\n\n"  # 添加页面分隔符
+                
             return text
         except Exception as e:
             logger.error(f"提取PDF文本时出错: {str(e)}")

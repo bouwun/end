@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
+import os
 
 class ToolTipButton(ttk.Button):
     """带有工具提示的按钮"""
@@ -327,3 +328,123 @@ class BankMappingEntryDialog(tk.Toplevel):
     def on_cancel(self):
         """取消按钮事件"""
         self.destroy()
+
+
+class AdvancedSettingsDialog(tk.Toplevel):
+    """高级设置对话框"""
+    
+    def __init__(self, parent, config=None):
+        super().__init__(parent)
+        self.title("高级设置")
+        self.geometry("500x400")
+        self.transient(parent)  # 设置为父窗口的临时窗口
+        self.grab_set()  # 模态对话框
+        
+        # 初始化结果
+        self.result = None
+        self.config = config or {}
+        
+        # 创建界面
+        self.create_widgets()
+        
+        # 设置窗口位置居中
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+    
+    def create_widgets(self):
+        """创建界面组件"""
+        # 主框架
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 创建选项卡
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        # 常规设置选项卡
+        general_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(general_frame, text="常规设置")
+        
+        # 线程设置
+        ttk.Label(general_frame, text="最大线程数:").grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+        self.max_threads_var = tk.StringVar(value=str(self.config.get("max_threads", os.cpu_count() or 4)))
+        tk.Spinbox(general_frame, from_=1, to=32, textvariable=self.max_threads_var, width=5).grid(row=0, column=1, sticky=tk.W, pady=(0, 5))
+        
+        # 自动打开结果文件
+        self.auto_open_var = tk.BooleanVar(value=self.config.get("auto_open_result", True))
+        ttk.Checkbutton(general_frame, text="处理完成后自动打开结果文件", variable=self.auto_open_var).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        
+        # 保存日志到文件
+        self.save_log_var = tk.BooleanVar(value=self.config.get("save_log", True))
+        ttk.Checkbutton(general_frame, text="保存日志到文件", variable=self.save_log_var).grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        
+        # 显示处理时间
+        self.show_time_var = tk.BooleanVar(value=self.config.get("show_processing_time", True))
+        ttk.Checkbutton(general_frame, text="显示处理时间", variable=self.show_time_var).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        
+        # 导出设置选项卡
+        export_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(export_frame, text="导出设置")
+        
+        # 默认导出格式
+        ttk.Label(export_frame, text="默认导出格式:").grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+        self.export_format_var = tk.StringVar(value=self.config.get("default_export_format", "xlsx"))
+        ttk.Combobox(export_frame, textvariable=self.export_format_var, values=["xlsx", "csv"], width=10).grid(row=0, column=1, sticky=tk.W, pady=(0, 5))
+        
+        # 包含汇总表
+        self.include_summary_var = tk.BooleanVar(value=self.config.get("include_summary", True))
+        ttk.Checkbutton(export_frame, text="包含汇总表", variable=self.include_summary_var).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        
+        # 包含银行汇总
+        self.include_bank_summary_var = tk.BooleanVar(value=self.config.get("include_bank_summary", True))
+        ttk.Checkbutton(export_frame, text="包含银行汇总", variable=self.include_bank_summary_var).grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        
+        # 包含月度汇总
+        self.include_month_summary_var = tk.BooleanVar(value=self.config.get("include_month_summary", True))
+        ttk.Checkbutton(export_frame, text="包含月度汇总", variable=self.include_month_summary_var).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        
+        # 按钮框架
+        btn_frame = ttk.Frame(self, padding="10")
+        btn_frame.pack(fill=tk.X)
+        
+        # 确定取消按钮
+        ttk.Button(btn_frame, text="确定", command=self.on_ok).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(btn_frame, text="取消", command=self.on_cancel).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="恢复默认", command=self.reset_defaults).pack(side=tk.LEFT, padx=5)
+    
+    def on_ok(self):
+        """确定按钮事件"""
+        # 收集设置
+        settings = {
+            "max_threads": int(self.max_threads_var.get()),
+            "auto_open_result": self.auto_open_var.get(),
+            "save_log": self.save_log_var.get(),
+            "show_processing_time": self.show_time_var.get(),
+            "default_export_format": self.export_format_var.get(),
+            "include_summary": self.include_summary_var.get(),
+            "include_bank_summary": self.include_bank_summary_var.get(),
+            "include_month_summary": self.include_month_summary_var.get()
+        }
+        
+        self.result = settings
+        self.destroy()
+    
+    def on_cancel(self):
+        """取消按钮事件"""
+        self.destroy()
+    
+    def reset_defaults(self):
+        """恢复默认设置"""
+        # 设置默认值
+        self.max_threads_var.set(str(os.cpu_count() or 4))
+        self.auto_open_var.set(True)
+        self.save_log_var.set(True)
+        self.show_time_var.set(True)
+        self.export_format_var.set("xlsx")
+        self.include_summary_var.set(True)
+        self.include_bank_summary_var.set(True)
+        self.include_month_summary_var.set(True)

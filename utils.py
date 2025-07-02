@@ -16,11 +16,15 @@ def setup_logging():
         os.makedirs(LOG_DIR)
     
     # 设置日志文件名
-    log_file = os.path.join(LOG_DIR, f"trea_py_bank_{datetime.now().strftime('%Y%m%d')}.log")
+    log_file = os.path.join(LOG_DIR, f"trea_py_bank_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
     
     # 配置日志
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
+    
+    # 清除现有的处理器
+    for handler in logger.handlers[:]: 
+        logger.removeHandler(handler)
     
     # 文件处理器
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
@@ -38,6 +42,10 @@ def setup_logging():
     # 添加处理器
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+    
+    # 记录启动信息
+    logger.info("=== 应用程序启动 ===")
+    logger.info(f"日志文件: {log_file}")
     
     return logger
 

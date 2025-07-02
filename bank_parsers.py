@@ -16,14 +16,31 @@ class BankParser(ABC):
     def extract_tables(self, pdf):
         """从PDF中提取表格数据"""
         tables = []
-        for page in pdf.pages:
+        for page_num, page in enumerate(pdf.pages):
             try:
                 # 尝试提取表格
                 page_tables = page.extract_tables()
                 if page_tables:
-                    tables.extend(page_tables)
+                    # 记录页码信息，方便调试
+                    for table in page_tables:
+                        if table and len(table) > 1:  # 只添加非空表格
+                            tables.append({
+                                'page': page_num + 1,
+                                'data': table
+                            })
             except Exception as e:
-                logger.warning(f"提取表格时出错: {str(e)}")
+                logger.warning(f"提取第{page_num+1}页表格时出错: {str(e)}")
+        
+        # 如果没有找到表格，尝试使用文本分析
+        if not tables:
+            for page_num, page in enumerate(pdf.pages):
+                try:
+                    text = page.extract_text() or ""
+                    # 这里可以添加文本分析逻辑，从纯文本中提取表格数据
+                    # ...
+                except Exception as e:
+                    logger.warning(f"分析第{page_num+1}页文本时出错: {str(e)}")
+        
         return tables
     
     def clean_text(self, text):
@@ -644,6 +661,14 @@ BANK_PARSERS = {
     "广发银行": GenericParser(),
     "平安银行": GenericParser(),
     "邮储银行": GenericParser(),
+    "玉山银行": GenericParser(),
+    "渣打银行": GenericParser(),
+    "汇丰银行": GenericParser(),
+    "南洋银行": GenericParser(),
+    "恒生银行": GenericParser(),
+    "中银香港": GenericParser(),
+    "东亚银行": GenericParser(),
+    "大新银行": GenericParser(),
 }
 
 
