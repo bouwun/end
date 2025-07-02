@@ -1,9 +1,10 @@
 import os
 import sys
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
-from ttkthemes import ThemedTk
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
 import threading
 import queue
 import time
@@ -21,16 +22,69 @@ from exceptions import PDFProcessingError, BankDetectionError
 # 设置日志
 logger = setup_logging()
 
-class BankStatementApp(ThemedTk):
+class SplashScreen(tk.Toplevel):
+    """启动画面"""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("")
+        self.geometry("400x250")
+        self.overrideredirect(True)  # 无边框窗口
+        self.configure(background="#ffffff")
+        
+        # 居中显示
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        
+        # 添加内容
+        frame = ttk.Frame(self, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 标题
+        ttk.Label(frame, text="银行账单批量处理工具", 
+                font=("Microsoft YaHei UI", 16, "bold"),
+                foreground="#4a86e8").pack(pady=(20, 10))
+        
+        # 副标题
+        ttk.Label(frame, text="正在加载应用...", 
+                font=("Microsoft YaHei UI", 10),
+                foreground="#666666").pack(pady=(0, 20))
+        
+        # 进度条
+        self.progress = ttk.Progressbar(frame, orient="horizontal", 
+                                      length=350, mode="indeterminate")
+        self.progress.pack(pady=10)
+        self.progress.start(15)
+        
+        # 版本信息
+        ttk.Label(frame, text="版本 1.0", 
+                font=("Microsoft YaHei UI", 8),
+                foreground="#999999").pack(side=tk.BOTTOM, pady=10)
+
+class BankStatementApp(ttk.Window):
     def __init__(self):
-        super().__init__(theme="arc")
+        # 使用ttkbootstrap的主题
+        super().__init__(themename="litera")  # 可选主题：cosmo, flatly, litera, minty, lumen, sandstone, yeti等
+        
+        # 设置自定义颜色方案 - 可以使用ttkbootstrap的颜色常量
+        self.primary_color = PRIMARY  # 使用ttkbootstrap常量
+        self.secondary_color = SECONDARY
+        self.accent_color = INFO
+        self.success_color = SUCCESS
+        self.warning_color = WARNING
+        self.error_color = DANGER
         
         # 应用程序配置
         self.title("银行账单批量处理工具")
-        self.geometry("900x700")
-        self.minsize(800, 600)
+        self.geometry("950x700")
+        self.minsize(850, 650)
         self.app_config = get_config()
-        # 将 self.config 重命名为 self.app_config
+        
+        # 设置样式
+        self.setup_styles()
         
         # 创建队列用于线程间通信
         self.queue = queue.Queue()
@@ -51,6 +105,22 @@ class BankStatementApp(ThemedTk):
         
         # 定期检查队列
         self.after(100, self.check_queue)
+    
+    def setup_styles(self):
+        """设置自定义样式 - 使用ttkbootstrap风格"""
+        self.custom_style = ttk.Style()
+        
+        # 设置整体背景色 - ttkbootstrap已经处理了大部分样式
+        # 设置标题标签样式
+        self.custom_style.configure("Title.TLabel", 
+                            font=("Microsoft YaHei UI", 12, "bold"), 
+                            foreground=self.primary_color)
+        
+        # 设置Treeview样式
+        self.custom_style.configure("Treeview", 
+                            font=("Microsoft YaHei UI", 9))
+        self.custom_style.configure("Treeview.Heading", 
+                            font=("Microsoft YaHei UI", 9, "bold"))
     
     def batch_detect_bank_type(self):
         """批量重新检测银行类型"""
@@ -134,60 +204,79 @@ class BankStatementApp(ThemedTk):
         self.config(menu=menubar)
     
     def create_main_frame(self):
-        """创建主界面"""
+        """创建主界面 - 使用ttkbootstrap样式"""
         # 创建主框架
-        main_frame = ttk.Frame(self, padding="10")
+        main_frame = ttk.Frame(self, padding="15")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # 顶部按钮区域
+        # 顶部标题
+        title_frame = ttk.Frame(main_frame)
+        title_frame.pack(fill=tk.X, pady=(0, 15))
+        ttk.Label(title_frame, text="银行账单批量处理", 
+                 font=("Microsoft YaHei UI", 12, "bold"),
+                 bootstyle="primary").pack(side=tk.LEFT)  # 使用bootstyle
+        
+        # 顶部按钮区域 - 使用更好的分组和间距
         btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill=tk.X, pady=(0, 10))
+        btn_frame.pack(fill=tk.X, pady=(0, 15))
         
-        # 添加按钮
-        self.select_pdf_btn = ToolTipButton(btn_frame, text="选择PDF文件", 
+        # 文件操作按钮组
+        file_btn_frame = ttk.Labelframe(btn_frame, text="文件操作", bootstyle="primary")  # 使用bootstyle
+        file_btn_frame.pack(side=tk.LEFT, padx=(0, 10), fill=tk.Y)
+        
+        # 添加按钮 - 使用ttkbootstrap样式
+        self.select_pdf_btn = ToolTipButton(file_btn_frame, text="选择PDF文件", 
                                          command=self.select_pdf_files,
-                                         tooltip="选择要处理的银行账单PDF文件")
-        self.select_pdf_btn.pack(side=tk.LEFT, padx=(0, 5))
+                                         tooltip="选择要处理的银行账单PDF文件",
+                                         bootstyle="primary")  # 使用bootstyle替代style
+        self.select_pdf_btn.pack(side=tk.LEFT, padx=5, pady=5)
         
-        self.select_output_btn = ToolTipButton(btn_frame, text="选择输出文件", 
-                                            command=self.select_output_file,
-                                            tooltip="选择输出的Excel文件路径")
-        self.select_output_btn.pack(side=tk.LEFT, padx=5)
-
-        # 添加选择文件夹按钮
-        self.select_folder_btn = ToolTipButton(btn_frame, text="选择文件夹", 
+        self.select_folder_btn = ToolTipButton(file_btn_frame, text="选择文件夹", 
                                            command=self.select_pdf_folder,
-                                           tooltip="选择包含银行账单PDF文件的文件夹")
-        self.select_folder_btn.pack(side=tk.LEFT, padx=5)
+                                           tooltip="选择包含银行账单PDF文件的文件夹",
+                                           bootstyle="primary")
+        self.select_folder_btn.pack(side=tk.LEFT, padx=5, pady=5)
         
-        self.select_output_btn = ToolTipButton(btn_frame, text="选择输出文件", 
+        self.select_output_btn = ToolTipButton(file_btn_frame, text="选择输出文件", 
                                             command=self.select_output_file,
-                                            tooltip="选择输出的Excel文件路径")
-        self.select_output_btn.pack(side=tk.LEFT, padx=5)
+                                            tooltip="选择输出的Excel文件路径",
+                                            bootstyle="primary")
+        self.select_output_btn.pack(side=tk.LEFT, padx=5, pady=5)
         
-        self.process_btn = ToolTipButton(btn_frame, text="开始处理", 
+        # 处理操作按钮组
+        process_btn_frame = ttk.Labelframe(btn_frame, text="处理操作", bootstyle="primary")
+        process_btn_frame.pack(side=tk.LEFT, padx=10, fill=tk.Y)
+        
+        self.process_btn = ToolTipButton(process_btn_frame, text="开始处理", 
                                        command=self.start_processing,
-                                       tooltip="开始处理所选PDF文件")
-        self.process_btn.pack(side=tk.LEFT, padx=5)
+                                       tooltip="开始处理所选PDF文件",
+                                       bootstyle="success")  # 使用success样式
+        self.process_btn.pack(side=tk.LEFT, padx=5, pady=5)
         
-        self.stop_btn = ToolTipButton(btn_frame, text="停止处理", 
+        self.stop_btn = ToolTipButton(process_btn_frame, text="停止处理", 
                                     command=self.stop_processing,
                                     tooltip="停止当前处理任务",
-                                    state=tk.DISABLED)
-        self.stop_btn.pack(side=tk.LEFT, padx=5)
-
-        # 添加批量操作按钮
-        self.batch_detect_btn = ToolTipButton(btn_frame, text="重新检测银行", 
+                                    state=tk.DISABLED,
+                                    bootstyle="danger")  # 使用danger样式
+        self.stop_btn.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # 批量操作按钮组
+        batch_btn_frame = ttk.Labelframe(btn_frame, text="批量操作", bootstyle="primary")
+        batch_btn_frame.pack(side=tk.LEFT, padx=10, fill=tk.Y)
+        
+        self.batch_detect_btn = ToolTipButton(batch_btn_frame, text="重新检测银行", 
                                            command=self.batch_detect_bank_type,
-                                           tooltip="重新检测所有文件的银行类型")
-        self.batch_detect_btn.pack(side=tk.LEFT, padx=5)
+                                           tooltip="重新检测所有文件的银行类型",
+                                           bootstyle="secondary")
+        self.batch_detect_btn.pack(side=tk.LEFT, padx=5, pady=5)
         
         # 文件列表区域
-        files_frame = ttk.LabelFrame(main_frame, text="PDF文件列表")
-        files_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        files_frame = ttk.Labelframe(main_frame, text="PDF文件列表", bootstyle="primary")
+        files_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
         
-        # 创建文件列表
-        self.file_tree = ttk.Treeview(files_frame, columns=("文件名", "银行", "状态", "文件大小"), show="headings")
+        # 创建文件列表 - 添加条纹效果
+        self.file_tree = ttk.Treeview(files_frame, columns=("文件名", "银行", "状态", "文件大小"), show="headings", style="Treeview")
+        
         self.file_tree.heading("文件名", text="文件名")
         self.file_tree.heading("银行", text="银行")
         self.file_tree.heading("状态", text="状态")
@@ -202,7 +291,7 @@ class BankStatementApp(ThemedTk):
         scrollbar = ttk.Scrollbar(files_frame, orient=tk.VERTICAL, command=self.file_tree.yview)
         self.file_tree.configure(yscrollcommand=scrollbar.set)
         
-        self.file_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.file_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # 右键菜单
@@ -212,22 +301,25 @@ class BankStatementApp(ThemedTk):
         self.context_menu.add_command(label="重新检测银行", command=self.redetect_bank_type)
         self.file_tree.bind("<Button-3>", self.show_context_menu)
         
-        # 日志区域
+        # 日志区域 - 改进样式
         log_frame = ttk.LabelFrame(main_frame, text="处理日志")
         log_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.log_text = ScrolledText(log_frame, height=10)
-        self.log_text.pack(fill=tk.BOTH, expand=True)
-        self.log_text.config(state=tk.DISABLED)
+        self.log_text = ScrolledText(log_frame, height=10, font=("Consolas", 9))
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.log_text.config(state=tk.DISABLED, background="#fafafa", foreground="#333333")
         
-        # 状态栏
-        status_frame = ttk.Frame(main_frame)
-        status_frame.pack(fill=tk.X, pady=(10, 0))
+        # 设置日志文本标签
+        # 标签配置移至setup_styles方法中
         
-        self.status_label = ttk.Label(status_frame, text="就绪")
+        # 状态栏 - 添加边框和背景色
+        status_frame = ttk.Frame(main_frame, relief="sunken", borderwidth=1)
+        status_frame.pack(fill=tk.X, pady=(15, 0))
+        
+        self.status_label = ttk.Label(status_frame, text="就绪", padding=(5, 2))
         self.status_label.pack(side=tk.LEFT)
         
-        self.output_label = ttk.Label(status_frame, text="输出文件: 未选择")
+        self.output_label = ttk.Label(status_frame, text="输出文件: 未选择", padding=(5, 2))
         self.output_label.pack(side=tk.RIGHT)
     
     def select_pdf_files(self):
@@ -261,7 +353,12 @@ class BankStatementApp(ThemedTk):
                     bank_name = processor.detect_bank_type(file_path, self.bank_mapping)
                     
                     # 添加到列表
-                    self.file_tree.insert("", tk.END, values=(file_name, bank_name, "待处理", file_size_str))
+                    item_id = self.file_tree.insert("", tk.END, values=(file_name, bank_name, "待处理", file_size_str))
+                    
+                    # 设置行样式和状态标签
+                    row_index = len(self.pdf_files)
+                    row_tags = ["even_row" if row_index % 2 == 0 else "odd_row", "pending"]
+                    self.file_tree.item(item_id, tags=row_tags)
                     
                     # 添加到文件列表
                     self.pdf_files.append({
@@ -275,7 +372,12 @@ class BankStatementApp(ThemedTk):
                     
                 except BankDetectionError as e:
                     # 银行类型检测失败
-                    self.file_tree.insert("", tk.END, values=(file_name, "未知", "待处理", file_size_str))
+                    item_id = self.file_tree.insert("", tk.END, values=(file_name, "未知", "待处理", file_size_str))
+                    
+                    # 设置行样式和状态标签
+                    row_index = len(self.pdf_files)
+                    row_tags = ["even_row" if row_index % 2 == 0 else "odd_row", "unknown_bank"]
+                    self.file_tree.item(item_id, tags=row_tags)
                     
                     # 添加到文件列表
                     self.pdf_files.append({
@@ -285,11 +387,11 @@ class BankStatementApp(ThemedTk):
                         "size": file_size
                     })
                     
-                    self.log(f"添加文件: {file_name}，无法检测银行类型: {str(e)}，大小: {file_size_str}")
+                    self.log(f"添加文件: {file_name}，无法检测银行类型: {str(e)}，大小: {file_size_str}", "WARNING")
                 
                 except Exception as e:
                     # 其他错误
-                    self.log(f"添加文件 {file_name} 时出错: {str(e)}")
+                    self.log(f"添加文件 {file_name} 时出错: {str(e)}", "ERROR")
             
             # 更新状态
             self.status_label.config(text=f"已添加 {len(self.pdf_files)} 个文件")
@@ -710,20 +812,41 @@ class BankStatementApp(ThemedTk):
         else:
             messagebox.showerror("错误", "无法打开Excel文件，文件不存在")
     
-    def log(self, message):
-        """添加日志消息"""
-        # 获取当前时间
-        now = datetime.now().strftime("%H:%M:%S")
-        log_message = f"[{now}] {message}\n"
+    def log(self, message, level="INFO"):
+        """添加日志"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        log_message = f"[{timestamp}] [{level}] {message}"
         
-        # 添加到日志区域
+        # 根据日志级别设置颜色
+        tag = None
+        if level == "ERROR":
+            tag = "error"
+        elif level == "WARNING":
+            tag = "warning"
+        elif level == "SUCCESS":
+            tag = "success"
+        
+        # 启用编辑
         self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(tk.END, log_message)
+        
+        # 添加日志消息
+        self.log_text.insert(tk.END, log_message + "\n")
+        
+        # 应用标签
+        if tag:
+            line_count = int(self.log_text.index(tk.END).split(".")[0])
+            start_index = f"{line_count-1}.0"
+            end_index = f"{line_count-1}.end"
+            self.log_text.tag_add(tag, start_index, end_index)
+        
+        # 滚动到底部
         self.log_text.see(tk.END)
+        
+        # 禁用编辑
         self.log_text.config(state=tk.DISABLED)
         
-        # 写入日志文件
-        logger.info(message)
+        # 同时输出到控制台
+        print(log_message)
     
     def show_context_menu(self, event):
         """显示右键菜单"""
@@ -873,6 +996,32 @@ class BankStatementApp(ThemedTk):
         # 关闭应用程序
         self.destroy()
 
+# 在应用启动时显示启动画面
+def main():
+    root = tk.Tk()
+    root.withdraw()  # 隐藏主窗口
+    
+    # 显示启动画面
+    splash = SplashScreen(root)
+    
+    # 模拟加载过程
+    def start_app():
+        # 先创建新应用
+        app = BankStatementApp()
+        app.protocol("WM_DELETE_WINDOW", app.on_closing)
+        
+        # 然后停止进度条并销毁旧窗口
+        splash.progress.stop()  # 停止进度条
+        splash.destroy()
+        root.destroy()
+        
+        # 最后启动主循环
+        app.mainloop()
+    
+    # 2秒后启动应用
+    root.after(2000, start_app)
+    root.mainloop()
+
 # 主程序入口
 if __name__ == "__main__":
     # 检查是否是PyInstaller打包的可执行文件
@@ -880,6 +1029,4 @@ if __name__ == "__main__":
         # 如果是打包的可执行文件，设置工作目录为可执行文件所在目录
         os.chdir(os.path.dirname(sys.executable))
     
-    app = BankStatementApp()
-    app.protocol("WM_DELETE_WINDOW", app.on_closing)
-    app.mainloop()
+    main()

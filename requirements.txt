@@ -4,7 +4,8 @@ openpyxl==3.1.2
 python-dateutil==2.8.2
 pillow==10.1.0
 tkinter-tooltip==3.1.2
-ttkthemes==3.2.2
+# ttkthemes==3.2.2  # 注释掉或删除
+ttkbootstrap==1.10.1  # 添加ttkbootstrap
 pdfplumber==0.6.0
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.23.0

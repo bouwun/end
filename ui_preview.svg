@@ -1,74 +1,103 @@
-<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
+<svg width="950" height="700" xmlns="http://www.w3.org/2000/svg">
   <!-- 背景 -->
-  <rect width="800" height="600" fill="#f5f5f5" />
+  <rect width="950" height="700" fill="#f5f5f5" />
   
   <!-- 窗口边框 -->
-  <rect x="10" y="10" width="780" height="580" rx="5" ry="5" fill="#ffffff" stroke="#cccccc" stroke-width="1" />
+  <rect x="10" y="10" width="930" height="680" rx="8" ry="8" fill="#ffffff" stroke="#e0e0e0" stroke-width="1" />
   
   <!-- 标题栏 -->
-  <rect x="10" y="10" width="780" height="30" rx="5" ry="5" fill="#4a86e8" />
-  <text x="30" y="30" font-family="Arial" font-size="14" fill="white">银行账单批量处理工具</text>
+  <rect x="10" y="10" width="930" height="35" rx="8" ry="8" fill="#4a86e8" />
+  <text x="30" y="33" font-family="Microsoft YaHei UI" font-size="16" fill="white" font-weight="bold">银行账单批量处理工具</text>
   
   <!-- 菜单栏 -->
-  <rect x="10" y="40" width="780" height="25" fill="#f0f0f0" />
-  <text x="30" y="57" font-family="Arial" font-size="12" fill="#333333">文件</text>
-  <text x="80" y="57" font-family="Arial" font-size="12" fill="#333333">设置</text>
-  <text x="130" y="57" font-family="Arial" font-size="12" fill="#333333">帮助</text>
+  <rect x="10" y="45" width="930" height="30" fill="#f0f0f0" />
+  <text x="30" y="65" font-family="Microsoft YaHei UI" font-size="12" fill="#333333">文件</text>
+  <text x="80" y="65" font-family="Microsoft YaHei UI" font-size="12" fill="#333333">设置</text>
+  <text x="130" y="65" font-family="Microsoft YaHei UI" font-size="12" fill="#333333">帮助</text>
   
-  <!-- 工具栏 -->
-  <rect x="20" y="75" width="760" height="40" rx="3" ry="3" fill="#f9f9f9" stroke="#e0e0e0" stroke-width="1" />
+  <!-- 标题 -->
+  <text x="30" y="100" font-family="Microsoft YaHei UI" font-size="14" font-weight="bold" fill="#4a86e8">银行账单批量处理</text>
   
-  <!-- 按钮 -->
-  <rect x="30" y="80" width="120" height="30" rx="3" ry="3" fill="#4a86e8" />
-  <text x="50" y="100" font-family="Arial" font-size="12" fill="white">选择PDF文件</text>
+  <!-- 按钮组 - 文件操作 -->
+  <rect x="20" y="115" width="300" height="60" rx="5" ry="5" fill="#ffffff" stroke="#e0e0e0" stroke-width="1" />
+  <text x="30" y="135" font-family="Microsoft YaHei UI" font-size="12" fill="#666666">文件操作</text>
   
-  <rect x="160" y="80" width="120" height="30" rx="3" ry="3" fill="#4a86e8" />
-  <text x="180" y="100" font-family="Arial" font-size="12" fill="white">选择输出文件</text>
+  <rect x="30" y="140" width="85" height="28" rx="4" ry="4" fill="#4a86e8" />
+  <text x="40" y="158" font-family="Microsoft YaHei UI" font-size="11" fill="white">选择PDF文件</text>
   
-  <rect x="290" y="80" width="120" height="30" rx="3" ry="3" fill="#4a86e8" />
-  <text x="320" y="100" font-family="Arial" font-size="12" fill="white">开始处理</text>
+  <rect x="125" y="140" width="85" height="28" rx="4" ry="4" fill="#4a86e8" />
+  <text x="140" y="158" font-family="Microsoft YaHei UI" font-size="11" fill="white">选择文件夹</text>
   
-  <rect x="420" y="80" width="120" height="30" rx="3" ry="3" fill="#cccccc" />
-  <text x="450" y="100" font-family="Arial" font-size="12" fill="#666666">停止处理</text>
+  <rect x="220" y="140" width="85" height="28" rx="4" ry="4" fill="#4a86e8" />
+  <text x="230" y="158" font-family="Microsoft YaHei UI" font-size="11" fill="white">选择输出文件</text>
+  
+  <!-- 按钮组 - 处理操作 -->
+  <rect x="330" y="115" width="200" height="60" rx="5" ry="5" fill="#ffffff" stroke="#e0e0e0" stroke-width="1" />
+  <text x="340" y="135" font-family="Microsoft YaHei UI" font-size="12" fill="#666666">处理操作</text>
+  
+  <rect x="340" y="140" width="85" height="28" rx="4" ry="4" fill="#4a86e8" />
+  <text x="360" y="158" font-family="Microsoft YaHei UI" font-size="11" fill="white">开始处理</text>
+  
+  <rect x="435" y="140" width="85" height="28" rx="4" ry="4" fill="#f8f9fa" stroke="#e0e0e0" stroke-width="1" />
+  <text x="455" y="158" font-family="Microsoft YaHei UI" font-size="11" fill="#666666">停止处理</text>
+  
+  <!-- 按钮组 - 批量操作 -->
+  <rect x="540" y="115" width="200" height="60" rx="5" ry="5" fill="#ffffff" stroke="#e0e0e0" stroke-width="1" />
+  <text x="550" y="135" font-family="Microsoft YaHei UI" font-size="12" fill="#666666">批量操作</text>
+  
+  <rect x="550" y="140" width="100" height="28" rx="4" ry="4" fill="#f8f9fa" stroke="#e0e0e0" stroke-width="1" />
+  <text x="560" y="158" font-family="Microsoft YaHei UI" font-size="11" fill="#666666">重新检测银行</text>
   
   <!-- 文件列表区域 -->
-  <rect x="20" y="130" width="760" height="200" rx="3" ry="3" fill="white" stroke="#e0e0e0" stroke-width="1" />
-  <text x="30" y="150" font-family="Arial" font-size="14" font-weight="bold" fill="#333333">PDF文件列表</text>
+  <rect x="20" y="185" width="910" height="250" rx="5" ry="5" fill="white" stroke="#e0e0e0" stroke-width="1" />
+  <text x="30" y="205" font-family="Microsoft YaHei UI" font-size="13" font-weight="bold" fill="#4a86e8">PDF文件列表</text>
   
   <!-- 表格头部 -->
-  <rect x="30" y="160" width="740" height="25" fill="#f0f0f0" />
-  <text x="40" y="177" font-family="Arial" font-size="12" fill="#333333">文件名</text>
-  <text x="400" y="177" font-family="Arial" font-size="12" fill="#333333">银行</text>
-  <text x="600" y="177" font-family="Arial" font-size="12" fill="#333333">状态</text>
+  <rect x="30" y="215" width="890" height="30" fill="#f0f0f0" />
+  <text x="40" y="235" font-family="Microsoft YaHei UI" font-size="11" font-weight="bold" fill="#333333">文件名</text>
+  <text x="400" y="235" font-family="Microsoft YaHei UI" font-size="11" font-weight="bold" fill="#333333">银行</text>
+  <text x="600" y="235" font-family="Microsoft YaHei UI" font-size="11" font-weight="bold" fill="#333333">状态</text>
+  <text x="800" y="235" font-family="Microsoft YaHei UI" font-size="11" font-weight="bold" fill="#333333">文件大小</text>
   
-  <!-- 表格内容示例 -->
-  <rect x="30" y="185" width="740" height="25" fill="white" />
-  <text x="40" y="202" font-family="Arial" font-size="12" fill="#333333">工商银行信用卡对账单202301.pdf</text>
-  <text x="400" y="202" font-family="Arial" font-size="12" fill="#333333">工商银行</text>
-  <text x="600" y="202" font-family="Arial" font-size="12" fill="#333333">待处理</text>
+  <!-- 表格内容示例 - 条纹效果 -->
+  <rect x="30" y="245" width="890" height="30" fill="white" />
+  <text x="40" y="265" font-family="Microsoft YaHei UI" font-size="11" fill="#333333">工商银行信用卡对账单202301.pdf</text>
+  <text x="400" y="265" font-family="Microsoft YaHei UI" font-size="11" fill="#333333">工商银行</text>
+  <text x="600" y="265" font-family="Microsoft YaHei UI" font-size="11" fill="#28a745">处理成功</text>
+  <text x="800" y="265" font-family="Microsoft YaHei UI" font-size="11" fill="#666666">1.2 MB</text>
   
-  <rect x="30" y="210" width="740" height="25" fill="#f9f9f9" />
-  <text x="40" y="227" font-family="Arial" font-size="12" fill="#333333">建设银行活期存款对账单202302.pdf</text>
-  <text x="400" y="227" font-family="Arial" font-size="12" fill="#333333">建设银行</text>
-  <text x="600" y="227" font-family="Arial" font-size="12" fill="#333333">待处理</text>
+  <rect x="30" y="275" width="890" height="30" fill="#f9f9f9" />
+  <text x="40" y="295" font-family="Microsoft YaHei UI" font-size="11" fill="#333333">建设银行活期存款对账单202302.pdf</text>
+  <text x="400" y="295" font-family="Microsoft YaHei UI" font-size="11" fill="#333333">建设银行</text>
+  <text x="600" y="295" font-family="Microsoft YaHei UI" font-size="11" fill="#007bff">处理中</text>
+  <text x="800" y="295" font-family="Microsoft YaHei UI" font-size="11" fill="#666666">2.5 MB</text>
   
-  <rect x="30" y="235" width="740" height="25" fill="white" />
-  <text x="40" y="252" font-family="Arial" font-size="12" fill="#333333">招商银行信用卡账单202303.pdf</text>
-  <text x="400" y="252" font-family="Arial" font-size="12" fill="#333333">招商银行</text>
-  <text x="600" y="252" font-family="Arial" font-size="12" fill="#333333">待处理</text>
+  <rect x="30" y="305" width="890" height="30" fill="white" />
+  <text x="40" y="325" font-family="Microsoft YaHei UI" font-size="11" fill="#333333">招商银行信用卡账单202303.pdf</text>
+  <text x="400" y="325" font-family="Microsoft YaHei UI" font-size="11" fill="#ffc107">未知</text>
+  <text x="600" y="325" font-family="Microsoft YaHei UI" font-size="11" fill="#6c757d">待处理</text>
+  <text x="800" y="325" font-family="Microsoft YaHei UI" font-size="11" fill="#666666">1.8 MB</text>
+  
+  <rect x="30" y="335" width="890" height="30" fill="#f9f9f9" />
+  <text x="40" y="355" font-family="Microsoft YaHei UI" font-size="11" fill="#333333">中国银行信用卡账单202304.pdf</text>
+  <text x="400" y="355" font-family="Microsoft YaHei UI" font-size="11" fill="#333333">中国银行</text>
+  <text x="600" y="355" font-family="Microsoft YaHei UI" font-size="11" fill="#dc3545">处理失败</text>
+  <text x="800" y="355" font-family="Microsoft YaHei UI" font-size="11" fill="#666666">1.5 MB</text>
   
   <!-- 日志区域 -->
-  <rect x="20" y="340" width="760" height="200" rx="3" ry="3" fill="white" stroke="#e0e0e0" stroke-width="1" />
-  <text x="30" y="360" font-family="Arial" font-size="14" font-weight="bold" fill="#333333">处理日志</text>
+  <rect x="20" y="445" width="910" height="200" rx="5" ry="5" fill="white" stroke="#e0e0e0" stroke-width="1" />
+  <text x="30" y="465" font-family="Microsoft YaHei UI" font-size="13" font-weight="bold" fill="#4a86e8">处理日志</text>
   
   <!-- 日志内容示例 -->
-  <rect x="30" y="370" width="740" height="160" fill="#fafafa" />
-  <text x="40" y="390" font-family="Arial" font-size="12" fill="#666666">[14:30:25] 已添加 3 个PDF文件</text>
-  <text x="40" y="410" font-family="Arial" font-size="12" fill="#666666">[14:30:40] 已选择输出文件: 银行账单汇总_20230401.xlsx</text>
-  <text x="40" y="430" font-family="Arial" font-size="12" fill="#666666">[14:30:45] 开始处理文件...</text>
+  <rect x="30" y="475" width="890" height="160" fill="#fafafa" rx="3" ry="3" />
+  <text x="40" y="495" font-family="Consolas" font-size="11" fill="#666666">[14:30:25] [INFO] 已添加 4 个PDF文件</text>
+  <text x="40" y="515" font-family="Consolas" font-size="11" fill="#666666">[14:30:40] [INFO] 已选择输出文件: 银行账单汇总_20230401.xlsx</text>
+  <text x="40" y="535" font-family="Consolas" font-size="11" fill="#28a745">[14:30:45] [SUCCESS] 成功处理文件: 工商银行信用卡对账单202301.pdf</text>
+  <text x="40" y="555" font-family="Consolas" font-size="11" fill="#007bff">[14:30:50] [INFO] 正在处理文件: 建设银行活期存款对账单202302.pdf</text>
+  <text x="40" y="575" font-family="Consolas" font-size="11" fill="#dc3545">[14:31:05] [ERROR] 处理文件失败: 中国银行信用卡账单202304.pdf - 无法识别账单格式</text>
   
   <!-- 状态栏 -->
-  <rect x="10" y="550" width="780" height="30" fill="#f0f0f0" />
-  <text x="30" y="570" font-family="Arial" font-size="12" fill="#333333">就绪</text>
-  <text x="500" y="570" font-family="Arial" font-size="12" fill="#333333">输出文件: 银行账单汇总_20230401.xlsx</text>
+  <rect x="10" y="655" width="930" height="35" fill="#f0f0f0" stroke="#e0e0e0" stroke-width="1" />
+  <text x="30" y="677" font-family="Microsoft YaHei UI" font-size="11" fill="#333333">正在处理 1/4 个文件</text>
+  <text x="600" y="677" font-family="Microsoft YaHei UI" font-size="11" fill="#333333">输出文件: 银行账单汇总_20230401.xlsx</text>
 </svg>

@@ -1,5 +1,7 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+import ttkbootstrap as ttk  # 使用ttkbootstrap
+from ttkbootstrap.constants import *  # 导入常量
+from tkinter import messagebox  # 仍然需要messagebox
 from tkinter.scrolledtext import ScrolledText
 import os
 
@@ -27,11 +29,24 @@ class ToolTipButton(ttk.Button):
             self.tooltip_window.wm_overrideredirect(True)  # 无边框窗口
             self.tooltip_window.wm_geometry(f"+{x}+{y}")
             
-            # 添加标签
+            # 添加标签 - 使用ttkbootstrap样式
             label = ttk.Label(self.tooltip_window, text=self.tooltip, 
-                             background="#ffffe0", relief="solid", borderwidth=1,
-                             wraplength=180, justify="left", padding=(5, 2))
+                             bootstyle="inverse-dark",  # 使用ttkbootstrap样式
+                             font=("Microsoft YaHei UI", 9),
+                             wraplength=180, justify="left", padding=(8, 4))
             label.pack()
+            
+            # 添加淡入效果
+            self.tooltip_window.attributes("-alpha", 0.0)
+            self._fade_in()
+    
+    def _fade_in(self, alpha=0.0):
+        """淡入效果"""
+        if self.tooltip_window:
+            alpha += 0.1
+            if alpha <= 0.9:
+                self.tooltip_window.attributes("-alpha", alpha)
+                self.after(20, lambda: self._fade_in(alpha))
     
     def _hide_tooltip(self, event=None):
         """隐藏工具提示"""
@@ -46,9 +61,12 @@ class ProgressWindow(tk.Toplevel):
     def __init__(self, parent, total_files):
         super().__init__(parent)
         self.title("处理进度")
-        self.geometry("400x150")
+        self.geometry("450x180")
         self.transient(parent)  # 设置为父窗口的临时窗口
         self.resizable(False, False)
+        
+        # 设置窗口样式
+        self.configure(background="#ffffff")
         
         # 设置窗口位置居中
         self.update_idletasks()
@@ -59,17 +77,30 @@ class ProgressWindow(tk.Toplevel):
         self.geometry(f"{width}x{height}+{x}+{y}")
         
         # 创建进度条
-        self.progress_frame = ttk.Frame(self, padding="10")
+        self.progress_frame = ttk.Frame(self, padding="20")
         self.progress_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.progress_label = ttk.Label(self.progress_frame, text="正在处理文件...")
+        # 标题
+        title_label = ttk.Label(self.progress_frame, text="文件处理进度", 
+                              font=("Microsoft YaHei UI", 12, "bold"),
+                              bootstyle="primary")  # 使用bootstyle
+        title_label.pack(pady=(0, 15))
+        
+        # 进度信息
+        self.progress_label = ttk.Label(self.progress_frame, text="正在处理文件...",
+                                      font=("Microsoft YaHei UI", 10))
         self.progress_label.pack(pady=(0, 10))
         
+        # 进度条 - 使用ttkbootstrap样式
         self.progress_bar = ttk.Progressbar(self.progress_frame, orient=tk.HORIZONTAL, 
-                                          length=380, mode="determinate")
-        self.progress_bar.pack(pady=(0, 10))
+                                          length=400, mode="determinate",
+                                          bootstyle="success-striped")  # 使用带条纹的成功样式
+        self.progress_bar.pack(pady=(0, 15))
         
-        self.file_label = ttk.Label(self.progress_frame, text="")
+        # 文件信息
+        self.file_label = ttk.Label(self.progress_frame, text="",
+                                  font=("Microsoft YaHei UI", 9),
+                                  foreground="#666666")
         self.file_label.pack()
         
         # 设置进度条最大值
