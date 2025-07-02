@@ -14,20 +14,6 @@ class PDFProcessor:
     def __init__(self):
         self.supported_banks = get_supported_banks()
         self.bank_keywords = {
-            "工商银行": ["中国工商银行", "工行", "ICBC", "Industrial and Commercial Bank of China"],
-            "建设银行": ["中国建设银行", "建行", "CCB", "China Construction Bank"],
-            "农业银行": ["中国农业银行", "农行", "ABC", "Agricultural Bank of China"],
-            "中国银行": ["中行", "BOC", "Bank of China"],
-            "交通银行": ["交行", "BOCOM", "Bank of Communications"],
-            "招商银行": ["招行", "CMB", "China Merchants Bank"],
-            "浦发银行": ["上海浦东发展银行", "浦发", "SPDB", "Shanghai Pudong Development Bank"],
-            "民生银行": ["中国民生银行", "民生", "CMBC", "China Minsheng Bank"],
-            "中信银行": ["中信", "CITIC", "China CITIC Bank"],
-            "光大银行": ["中国光大银行", "光大", "CEB", "China Everbright Bank"],
-            "华夏银行": ["华夏", "HXB", "Huaxia Bank"],
-            "广发银行": ["广发", "CGB", "China Guangfa Bank"],
-            "平安银行": ["平安", "PAB", "Ping An Bank"],
-            "邮储银行": ["中国邮政储蓄银行", "邮储", "PSBC", "Postal Savings Bank of China"],
             "玉山银行": ["玉山银行", "玉山", "E.SUN", "E. SUN", "E.SUN Bank", "E. SUN BANK", "E.SUN Commercial Bank", "E. SUN COMMERCIAL BANK", "ESUN", "ESUNHKHH", "玉山銀行"],
             "渣打银行": ["渣打", "SDB", "Shanghaidi Bank"],
             "汇丰银行": ["中国汇丰银行", "汇丰", "HSBC", "HongKong and Shanghai Banking Corporation"],
