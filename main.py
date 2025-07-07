@@ -643,6 +643,66 @@ class BankStatementApp(ttk.Window):
             # 处理完成
             self.queue.put(("processing_done", None))
     
+    def process_single_file(self, file_path, output_path, bank_name):
+        """处理单个文件"""
+        try:
+            # 获取银行解析器
+            parser = get_bank_parser(bank_name)
+            if not parser:
+                return {
+                    'file': file_path,
+                    'status': 'error',
+                    'message': f'不支持的银行: {bank_name}'
+                }
+            
+            # 解析PDF
+            transactions = parser.parse(file_path)
+            
+            if not transactions:
+                return {
+                    'file': file_path,
+                    'status': 'warning',
+                    'message': '未找到交易记录'
+                }
+            
+            # 使用银行特有的格式化
+            formatted_transactions = parser.format_for_excel(transactions)
+            
+            # 保存为Excel，使用银行特有的列名
+            self.save_bank_specific_excel(formatted_transactions, output_path, parser)
+            
+            return {
+                'file': file_path,
+                'status': 'success',
+                'transactions': len(formatted_transactions),
+                'bank': parser.get_bank_name()
+            }
+            
+        except Exception as e:
+            return {
+                'file': file_path,
+                'status': 'error',
+                'message': str(e)
+            }
+
+    def save_bank_specific_excel(self, transactions, output_path, parser):
+        """保存银行特有格式的Excel文件"""
+        import pandas as pd
+        
+        # 创建DataFrame，使用银行特有的列名
+        df = pd.DataFrame(transactions, columns=parser.get_output_columns())
+        
+        # 生成文件名，包含银行名称
+        bank_name = parser.get_bank_name()
+        base_name = os.path.splitext(os.path.basename(output_path))[0]
+        excel_path = f"{base_name}_{bank_name}.xlsx"
+        
+        # 保存Excel文件
+        with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name=bank_name, index=False)
+        
+        return excel_path
+
     def save_results(self, all_results):
         """保存结果到文件"""
         if not all_results or not self.is_processing:
@@ -685,17 +745,17 @@ class BankStatementApp(ttk.Window):
                 # 写入总明细表
                 df.to_excel(writer, sheet_name="交易明细", index=False)
                 
-                # 按账户类型分sheet保存
-                account_types = df["账户类型"].unique()
-                for acc_type in account_types:
-                    if pd.notna(acc_type) and acc_type != "":
-                        # 过滤出当前账户类型的交易记录
-                        acc_df = df[df["账户类型"] == acc_type]
-                        if not acc_df.empty:
+                # 按银行分sheet保存
+                banks = df["银行"].unique()
+                for bank in banks:
+                    if pd.notna(bank) and bank != "":
+                        # 过滤出当前银行的交易记录
+                        bank_df = df[df["银行"] == bank]
+                        if not bank_df.empty:
                             # 生成有效的sheet名称（Excel限制sheet名长度为31个字符）
-                            sheet_name = str(acc_type)[:30]
-                            acc_df[display_columns].to_excel(writer, sheet_name=sheet_name, index=False)
-                            self.queue.put(("log", f"创建账户类型 '{acc_type}' 的明细表，包含 {len(acc_df)} 条记录"))
+                            sheet_name = str(bank)[:30]
+                            bank_df.to_excel(writer, sheet_name=sheet_name, index=False)
+                            self.queue.put(("log", f"创建银行 '{bank}' 的明细表，包含 {len(bank_df)} 条记录"))
                 
                 # 不再创建汇总表
                 # self.create_summary_tables(df, writer)
@@ -996,31 +1056,11 @@ class BankStatementApp(ttk.Window):
         # 关闭应用程序
         self.destroy()
 
-# 在应用启动时显示启动画面
+# 简化版本 - 移除启动画面
 def main():
-    root = tk.Tk()
-    root.withdraw()  # 隐藏主窗口
-    
-    # 显示启动画面
-    splash = SplashScreen(root)
-    
-    # 模拟加载过程
-    def start_app():
-        # 先创建新应用
-        app = BankStatementApp()
-        app.protocol("WM_DELETE_WINDOW", app.on_closing)
-        
-        # 然后停止进度条并销毁旧窗口
-        splash.progress.stop()  # 停止进度条
-        splash.destroy()
-        root.destroy()
-        
-        # 最后启动主循环
-        app.mainloop()
-    
-    # 2秒后启动应用
-    root.after(2000, start_app)
-    root.mainloop()
+    app = BankStatementApp()
+    app.protocol("WM_DELETE_WINDOW", app.on_closing)
+    app.mainloop()
 
 # 主程序入口
 if __name__ == "__main__":
