@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
+import pdfplumber
 
 # 导入自定义模块
 from pdf_processor import PDFProcessor
@@ -555,27 +556,20 @@ class BankStatementApp(ttk.Window):
         self.progress_window = ProgressWindow(self, len(self.pdf_files))
         
         # 启动处理线程
-        self.processing_thread = threading.Thread(target=self.process_files_parallel)
+        self.processing_thread = threading.Thread(target=self.process_files_thread)
         self.processing_thread.daemon = True
         self.processing_thread.start()
         
         self.log("开始处理文件...")
     
-    def process_files_parallel(self):
-        """在多线程中并行处理文件"""
+    def process_files_thread(self):
+        """在后台线程中处理文件"""
         try:
-            # 初始化结果DataFrame
-            all_results = []
-            
-            # 定义单个文件处理函数
             def process_single_file(file_info):
-                if not self.is_processing:
-                    return None
-                    
+                """处理单个文件的内部函数"""
                 try:
-                    # 更新进度信息
-                    self.queue.put(("update_progress", file_info["index"] + 1))
-                    self.queue.put(("log", f"开始处理: {file_info['name']}..."))
+                    if not self.is_processing:
+                        return None
                     
                     # 获取对应的银行解析器
                     bank_parser = get_bank_parser(file_info["bank"])
@@ -585,26 +579,43 @@ class BankStatementApp(ttk.Window):
                         self.queue.put(("update_status", (file_info["index"], file_info["name"], "失败")))
                         return None
                     
-                    # 处理PDF文件
-                    processor = PDFProcessor()
+                    # 处理PDF文件 - 直接使用银行解析器
                     start_time = time.time()
-                    transactions = processor.process_pdf(file_info["path"], bank_parser)
+                    with pdfplumber.open(file_info["path"]) as pdf:
+                        transactions = bank_parser.parse(pdf)
                     processing_time = time.time() - start_time
                     
                     if transactions:
-                        # 添加银行名称列
+                        # 添加银行名称和文件名信息
                         for trans in transactions:
                             trans["银行"] = file_info["bank"]
                             trans["文件名"] = file_info["name"]
                         
+                        # 生成输出文件路径
+                        base_name = os.path.splitext(self.output_file)[0]
+                        file_ext = os.path.splitext(self.output_file)[1]
+                        output_path = f"{base_name}_{file_info['bank']}_{os.path.splitext(file_info['name'])[0]}{file_ext}"
+                        
+                        # 让解析器直接保存文件
+                        bank_parser.save_to_excel(transactions, output_path, {
+                            'bank_name': file_info['bank'],
+                            'file_name': file_info['name']
+                        })
+                        
                         self.queue.put(("log", f"成功处理 {file_info['name']}，提取了 {len(transactions)} 条交易记录，耗时 {processing_time:.2f} 秒"))
+                        self.queue.put(("log", f"文件已保存到: {output_path}"))
                         self.queue.put(("update_status", (file_info["index"], file_info["name"], "成功")))
-                        return transactions
+                        return {
+                            'file': file_info['name'],
+                            'bank': file_info['bank'],
+                            'transactions': len(transactions),
+                            'output_path': output_path
+                        }
                     else:
                         self.queue.put(("log", f"警告: 未能从 {file_info['name']} 提取任何交易记录，耗时 {processing_time:.2f} 秒"))
                         self.queue.put(("update_status", (file_info["index"], file_info["name"], "无数据")))
                         return None
-                    
+                        
                 except Exception as e:
                     logger.exception(f"处理文件 {file_info['name']} 时出错")
                     self.queue.put(("log", f"错误: 处理 {file_info['name']} 失败 - {str(e)}"))
@@ -620,6 +631,7 @@ class BankStatementApp(ttk.Window):
             self.queue.put(("log", f"使用 {max_workers} 个线程并行处理文件"))
             
             # 使用线程池并行处理文件
+            processed_files = []
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {executor.submit(process_single_file, file_info): file_info for file_info in self.pdf_files}
                 
@@ -627,12 +639,16 @@ class BankStatementApp(ttk.Window):
                 for future in futures:
                     result = future.result()
                     if result:
-                        all_results.extend(result)
+                        processed_files.append(result)
         
-            # 保存结果到Excel
-            if all_results and self.is_processing:
-                self.save_results(all_results)
-            elif not all_results and self.is_processing:
+            # 显示处理结果汇总
+            if processed_files and self.is_processing:
+                total_transactions = sum(f['transactions'] for f in processed_files)
+                self.queue.put(("log", f"处理完成！共处理 {len(processed_files)} 个文件，提取了 {total_transactions} 条交易记录"))
+                self.queue.put(("log", "生成的文件列表:"))
+                for f in processed_files:
+                    self.queue.put(("log", f"  - {f['bank']}: {f['file']} -> {f['output_path']}"))
+            elif not processed_files and self.is_processing:
                 self.queue.put(("log", "警告: 未能从任何文件中提取交易记录"))
         
         except Exception as e:
@@ -641,168 +657,7 @@ class BankStatementApp(ttk.Window):
         
         finally:
             # 处理完成
-            self.queue.put(("processing_done", None))
-    
-    def process_single_file(self, file_path, output_path, bank_name):
-        """处理单个文件"""
-        try:
-            # 获取银行解析器
-            parser = get_bank_parser(bank_name)
-            if not parser:
-                return {
-                    'file': file_path,
-                    'status': 'error',
-                    'message': f'不支持的银行: {bank_name}'
-                }
-            
-            # 解析PDF
-            transactions = parser.parse(file_path)
-            
-            if not transactions:
-                return {
-                    'file': file_path,
-                    'status': 'warning',
-                    'message': '未找到交易记录'
-                }
-            
-            # 使用银行特有的格式化
-            formatted_transactions = parser.format_for_excel(transactions)
-            
-            # 保存为Excel，使用银行特有的列名
-            self.save_bank_specific_excel(formatted_transactions, output_path, parser)
-            
-            return {
-                'file': file_path,
-                'status': 'success',
-                'transactions': len(formatted_transactions),
-                'bank': parser.get_bank_name()
-            }
-            
-        except Exception as e:
-            return {
-                'file': file_path,
-                'status': 'error',
-                'message': str(e)
-            }
-
-    def save_bank_specific_excel(self, transactions, output_path, parser):
-        """保存银行特有格式的Excel文件"""
-        import pandas as pd
-        
-        # 创建DataFrame，使用银行特有的列名
-        df = pd.DataFrame(transactions, columns=parser.get_output_columns())
-        
-        # 生成文件名，包含银行名称
-        bank_name = parser.get_bank_name()
-        base_name = os.path.splitext(os.path.basename(output_path))[0]
-        excel_path = f"{base_name}_{bank_name}.xlsx"
-        
-        # 保存Excel文件
-        with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name=bank_name, index=False)
-        
-        return excel_path
-
-    def save_results(self, all_results):
-        """保存结果到文件"""
-        if not all_results or not self.is_processing:
-            return
-        
-        self.queue.put(("log", f"处理完成，共提取 {len(all_results)} 条交易记录，准备保存到文件"))
-        
-        # 创建DataFrame
-        df = pd.DataFrame(all_results)
-        
-        # 标准化列名和顺序
-        columns_mapping = {
-            "交易描述": "说明",
-            "货币": "币别",
-            "账户余额": "余额"
-        }
-        
-        # 重命名列
-        df = df.rename(columns=columns_mapping)
-        
-        # 确保所有需要的列都存在
-        required_columns = ["交易日期", "币别", "说明", "支出金额", "收入金额", "余额", "备注", "银行", "文件名"]
-        for col in required_columns:
-            if col not in df.columns:
-                df[col] = ""
-        
-        # 选择需要的列并排序
-        df = df[required_columns]
-        
-        # 根据文件扩展名决定保存格式
-        file_ext = os.path.splitext(self.output_file)[1].lower()
-        
-        if file_ext == ".csv":
-            # 保存为CSV
-            df.to_csv(self.output_file, index=False, encoding="utf-8-sig")
-            self.queue.put(("log", f"成功保存结果到CSV文件: {self.output_file}"))
-        else:
-            # 保存为Excel
-            with pd.ExcelWriter(self.output_file, engine="openpyxl") as writer:
-                # 写入总明细表
-                df.to_excel(writer, sheet_name="交易明细", index=False)
-                
-                # 按银行分sheet保存
-                banks = df["银行"].unique()
-                for bank in banks:
-                    if pd.notna(bank) and bank != "":
-                        # 过滤出当前银行的交易记录
-                        bank_df = df[df["银行"] == bank]
-                        if not bank_df.empty:
-                            # 生成有效的sheet名称（Excel限制sheet名长度为31个字符）
-                            sheet_name = str(bank)[:30]
-                            bank_df.to_excel(writer, sheet_name=sheet_name, index=False)
-                            self.queue.put(("log", f"创建银行 '{bank}' 的明细表，包含 {len(bank_df)} 条记录"))
-                
-                # 不再创建汇总表
-                # self.create_summary_tables(df, writer)
-            
-            self.queue.put(("log", f"成功保存结果到Excel文件: {self.output_file}"))
-    
-    def create_summary_tables(self, df, writer):
-        """创建汇总表"""
-        try:
-            # 按银行汇总
-            bank_summary = df.groupby("银行").agg({
-                "收入金额": "sum",
-                "支出金额": "sum",
-                "交易日期": "count"
-            }).rename(columns={"交易日期": "交易笔数"})
-            
-            bank_summary["净收入"] = bank_summary["收入金额"] - bank_summary["支出金额"]
-            bank_summary.to_excel(writer, sheet_name="银行汇总")
-            
-            # 按月汇总
-            df["月份"] = pd.to_datetime(df["交易日期"]).dt.strftime("%Y-%m")
-            month_summary = df.groupby("月份").agg({
-                "收入金额": "sum",
-                "支出金额": "sum",
-                "交易日期": "count"
-            }).rename(columns={"交易日期": "交易笔数"})
-            
-            month_summary["净收入"] = month_summary["收入金额"] - month_summary["支出金额"]
-            month_summary.to_excel(writer, sheet_name="月度汇总")
-            
-            # 按币别汇总
-            if "币别" in df.columns and df["币别"].notna().any():
-                currency_summary = df.groupby("币别").agg({
-                    "收入金额": "sum",
-                    "支出金额": "sum",
-                    "交易日期": "count"
-                }).rename(columns={"交易日期": "交易笔数"})
-                
-                currency_summary["净收入"] = currency_summary["收入金额"] - currency_summary["支出金额"]
-                currency_summary.to_excel(writer, sheet_name="币别汇总")
-            
-            self.queue.put(("log", "成功创建汇总表"))
-            
-        except Exception as e:
-            logger.exception("创建汇总表时出错")
-            self.queue.put(("log", f"创建汇总表时出错: {str(e)}"))
-    
+            self.queue.put(("processing_done", 
     def stop_processing(self):
         """停止处理"""
         if self.is_processing:
@@ -860,10 +715,21 @@ class BankStatementApp(ttk.Window):
         
         # 显示完成消息
         if self.is_processing:  # 如果不是被用户中断的
-            if messagebox.askyesno("处理完成", "所有文件处理完成，是否打开生成的Excel文件？"):
-                self.open_excel_file()
+            if messagebox.askyesno("处理完成", "所有文件处理完成，是否打开输出文件夹？"):
+                self.open_output_folder()
         
         self.is_processing = False
+    
+    def open_output_folder(self):
+        """打开输出文件夹"""
+        if self.output_file:
+            output_dir = os.path.dirname(self.output_file)
+            if os.path.exists(output_dir):
+                os.startfile(output_dir)
+            else:
+                messagebox.showerror("错误", "输出文件夹不存在")
+        else:
+            messagebox.showerror("错误", "未设置输出路径")
     
     def open_excel_file(self):
         """打开生成的Excel文件"""

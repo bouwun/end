@@ -1,13 +1,17 @@
-PyPDF2==3.0.1
+# 核心依赖
 pandas==2.1.1
 openpyxl==3.1.2
-python-dateutil==2.8.2
-pillow==10.1.0
-tkinter-tooltip==3.1.2
-# ttkthemes==3.2.2  # 注释掉或删除
-ttkbootstrap==1.10.1  # 添加ttkbootstrap
 pdfplumber==0.6.0
+ttkbootstrap==1.10.1
+
+# 字符串匹配（银行识别）
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.23.0
-matplotlib==3.8.0
-seaborn==0.13.0
+
+# 以下包暂时保留，如果确认不需要可以删除
+# PyPDF2==3.0.1  # 未使用，可删除
+# python-dateutil==2.8.2  # 未使用，可删除
+# pillow==10.1.0  # 未使用，可删除
+# tkinter-tooltip==3.1.2  # 未使用，可删除
+# matplotlib==3.8.0  # 未使用，可删除
+# seaborn==0.13.0  # 未使用，可删除

@@ -1,15 +1,12 @@
 import os
-import re
 import logging
-from datetime import datetime
-import pdfplumber
 from fuzzywuzzy import fuzz
-from bank_parsers import get_bank_parser, get_supported_banks
+from bank_parsers import get_supported_banks
 
 logger = logging.getLogger(__name__)
 
 class PDFProcessor:
-    """PDF处理器，用于处理银行账单PDF文件"""
+    """PDF处理器，用于银行类型检测"""
     
     def __init__(self):
         self.supported_banks = get_supported_banks()
@@ -26,8 +23,17 @@ class PDFProcessor:
     def detect_bank_type(self, pdf_path, bank_mapping=None):
         """检测PDF文件的银行类型"""
         try:
+            # 导入pdfplumber用于临时文本提取
+            import pdfplumber
+            
             # 提取PDF文件的前几页文本用于识别
-            text = self.extract_text_from_pdf(pdf_path, max_pages=2)
+            text = ""
+            with pdfplumber.open(pdf_path) as pdf:
+                # 只读取前2页用于银行类型识别
+                pages_to_extract = pdf.pages[:2]
+                for page in pages_to_extract:
+                    page_text = page.extract_text() or ""
+                    text += page_text + "\n\n"
             
             # 首先检查用户自定义的映射
             if bank_mapping:
@@ -70,117 +76,3 @@ class PDFProcessor:
         except Exception as e:
             logger.error(f"检测银行类型时出错: {str(e)}")
             return "未知"
-    
-    def extract_text_from_pdf(self, pdf_path, max_pages=None, page_numbers=None):
-        """从PDF文件中提取文本
-        
-        Args:
-            pdf_path: PDF文件路径
-            max_pages: 最大页数限制
-            page_numbers: 指定页码列表，如果提供则忽略max_pages
-            
-        Returns:
-            提取的文本字符串
-        """
-        text = ""
-        try:
-            with pdfplumber.open(pdf_path) as pdf:
-                # 确定要处理的页面
-                if page_numbers:
-                    pages_to_extract = [pdf.pages[i] for i in page_numbers if i < len(pdf.pages)]
-                else:
-                    pages_to_extract = pdf.pages[:max_pages] if max_pages else pdf.pages
-                
-                # 提取文本
-                for page in pages_to_extract:
-                    page_text = page.extract_text() or ""
-                    text += page_text + "\n\n"  # 添加页面分隔符
-                
-            return text
-        except Exception as e:
-            logger.error(f"提取PDF文本时出错: {str(e)}")
-            return ""
-    
-    def process_pdf(self, pdf_path, bank_parser):
-        """处理PDF文件并提取交易记录"""
-        try:
-            # 打开PDF文件
-            with pdfplumber.open(pdf_path) as pdf:
-                # 使用银行解析器提取交易记录
-                if hasattr(bank_parser, 'parse') and callable(bank_parser.parse):
-                    # 检查parse方法的返回值类型
-                    result = bank_parser.parse(pdf)
-                    
-                    # 如果返回元组，说明是新版解析器，返回了按账户类型分组的交易记录
-                    if isinstance(result, tuple) and len(result) == 2:
-                        transactions, account_type_transactions = result
-                        return transactions
-                    else:
-                        # 旧版解析器，只返回了交易记录列表
-                        return result
-                else:
-                    raise ValueError(f"提供的银行解析器 {type(bank_parser).__name__} 没有实现parse方法")
-                
-        except Exception as e:
-            logger.exception(f"处理PDF文件 {pdf_path} 时出错: {str(e)}")
-            raise PDFProcessingError(f"处理PDF文件时出错: {str(e)}")
-    
-    def standardize_transactions(self, transactions):
-        """标准化交易记录格式"""
-        standardized = []
-        
-        for trans in transactions:
-            # 创建标准化的交易记录
-            std_trans = {}
-            
-            # 复制原始字段
-            for key, value in trans.items():
-                std_trans[key] = value
-            
-            # 确保关键字段存在
-            if "交易日期" in std_trans and isinstance(std_trans["交易日期"], str):
-                # 尝试将日期字符串转换为日期对象
-                try:
-                    # 尝试多种常见的日期格式
-                    date_formats = [
-                        "%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日",
-                        "%Y.%m.%d", "%d-%m-%Y", "%d/%m/%Y"
-                    ]
-                    
-                    date_str = std_trans["交易日期"]
-                    for fmt in date_formats:
-                        try:
-                            date_obj = datetime.strptime(date_str, fmt)
-                            std_trans["交易日期"] = date_obj.strftime("%Y-%m-%d")
-                            break
-                        except ValueError:
-                            continue
-                except Exception:
-                    # 如果转换失败，保留原始字符串
-                    pass
-            
-            # 处理金额字段，确保是数值类型
-            for amount_field in ["交易金额", "收入金额", "支出金额", "账户余额"]:
-                if amount_field in std_trans:
-                    try:
-                        # 移除金额中的非数字字符（保留小数点和负号）
-                        amount_str = str(std_trans[amount_field])
-                        amount_str = re.sub(r'[^\d.-]', '', amount_str)
-                        std_trans[amount_field] = float(amount_str) if amount_str else 0.0
-                    except (ValueError, TypeError):
-                        # 如果转换失败，设为0
-                        std_trans[amount_field] = 0.0
-            
-            # 如果没有明确的收入/支出金额，但有交易金额，则根据金额正负判断
-            if "交易金额" in std_trans and "收入金额" not in std_trans and "支出金额" not in std_trans:
-                amount = float(std_trans["交易金额"])
-                if amount > 0:
-                    std_trans["收入金额"] = amount
-                    std_trans["支出金额"] = 0.0
-                else:
-                    std_trans["收入金额"] = 0.0
-                    std_trans["支出金额"] = abs(amount)
-            
-            standardized.append(std_trans)
-        
-        return standardized
