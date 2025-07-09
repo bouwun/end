@@ -13,6 +13,7 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 import pdfplumber
 
+
 # 导入自定义模块
 from pdf_processor import PDFProcessor
 from bank_parsers import get_bank_parser
@@ -654,10 +655,12 @@ class BankStatementApp(ttk.Window):
         except Exception as e:
             logger.exception("处理过程中发生错误")
             self.queue.put(("log", f"处理过程中发生错误: {str(e)}"))
+            self.queue.put(("processing_done", None))
         
         finally:
             # 处理完成
-            self.queue.put(("processing_done", 
+            self.queue.put(("processing_done", None))
+    
     def stop_processing(self):
         """停止处理"""
         if self.is_processing:
