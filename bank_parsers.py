@@ -69,23 +69,75 @@ class BankParser(ABC):
 
 
 class HSBCParser(BankParser):
-    """汇丰银行账单解析器 - 专门提取三种账户类型的交易数据"""
+    """汇丰银行账单解析器"""
     
     def __init__(self):
         super().__init__()
         self.bank_name = "汇丰银行"
-        
-        # 定义目标账户类型和对应关键词
         self.target_account_types = ["港币往来", "港币储蓄", "外币储蓄"]
         self.account_keywords = {
-            "港币往来": ["港币往来", "HKD Current", "HKD CURRENT"],
-            "港币储蓄": ["港币储蓄", "HKD Savings", "HKD SAVINGS"],
-            "外币储蓄": ["外币储蓄", "Foreign Currency Savings", "FOREIGN CURRENCY SAVINGS"]
+            "港币往来": ["港币往来", "HKD CURRENT", "HKD Current"],
+            "港币储蓄": ["港币储蓄", "HKD SAVINGS", "HKD Savings"],
+            "外币储蓄": ["外币储蓄", "FOREIGN CURRENCY SAVINGS", "Foreign Currency Savings"]
         }
-        
-        # 定义需要过滤的关键词
-        self.filter_keywords = ["Total", "Exchange", "The", "HSBC", "多谢", "Thank", "Statement", "Balance Brought Forward", "Balance Carried Forward"]
     
+    def _find_column_name(self, headers, candidates):
+        """在表头中查找匹配的列名"""
+        for candidate in candidates:
+            for header in headers:
+                if candidate.lower() in str(header).lower():
+                    return header
+        return None
+    
+    def should_filter_transaction(self, transaction_details):
+        """判断是否应该过滤掉某个交易记录"""
+        if not transaction_details:
+            return True
+        
+        # 过滤掉的关键词
+        filter_keywords = [
+            "B/F BALANCE", "BALANCE B/F", "BALANCE BROUGHT FORWARD",
+            "结余", "余额结转", "期初余额", "OPENING BALANCE"
+        ]
+        
+        transaction_upper = transaction_details.upper()
+        for keyword in filter_keywords:
+            if keyword in transaction_upper:
+                return True
+        
+        return False
+    
+    def extract_currency_from_details(self, transaction_details, account_type):
+        """从交易详情中提取货币类型"""
+        if not transaction_details:
+            # 根据账户类型推断货币
+            if "港币" in account_type:
+                return "HKD"
+            elif "外币" in account_type:
+                return "USD"  # 默认美元，可根据实际情况调整
+            else:
+                return "HKD"
+        
+        # 从交易详情中查找货币代码
+        currency_pattern = r'\\b([A-Z]{3})\\b'
+        currency_matches = re.findall(currency_pattern, transaction_details.upper())
+        
+        # 常见货币代码
+        common_currencies = ['USD', 'HKD', 'CNY', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'SGD']
+        
+        for currency in currency_matches:
+            if currency in common_currencies:
+                return currency
+        
+        # 如果没有找到，根据账户类型推断
+        if "港币" in account_type:
+            return "HKD"
+        elif "外币" in account_type:
+            return "USD"  # 默认美元
+        else:
+            return "HKD"
+
+
     def find_account_pages(self, pdf_obj, account_type):
         """查找指定账户类型所在的页面"""
         account_pages = []
@@ -149,73 +201,79 @@ class HSBCParser(BankParser):
         transactions = []
         
         try:
-            # 使用Camelot提取表格
+            # 使用camelot提取表格
             tables = camelot.read_pdf(
                 pdf_path, 
                 pages=str(page_num),
                 flavor='stream',
                 table_areas=None,
                 columns=None,
-                edge_tol=500,
-                row_tol=10,
-                column_tol=0
+                edge_tol=1000,
+                row_tol=20,
+                column_tol=10,
+                split_text=True
             )
-            
-            logger.info(f"Camelot在第{page_num}页找到{len(tables)}个表格")
-            
-            # 如果没有找到表格，尝试更宽松的参数
-            if len(tables) == 0:
-                logger.info("尝试使用更宽松的参数重新提取表格")
-                tables = camelot.read_pdf(
-                    pdf_path, 
-                    pages=str(page_num),
-                    flavor='stream',
-                    table_areas=None,
-                    columns=None,
-                    edge_tol=1000,
-                    row_tol=20,
-                    column_tol=10,
-                    split_text=True
-                )
-            
+        
+            # 添加调试输出
+            print(f"\n=== 第{page_num}页 {account_type} 调试信息 ===")
+            print(f"找到 {len(tables)} 个表格")
+        
             # 处理每个表格
             for table_idx, table in enumerate(tables):
                 df = table.df
-                logger.info(f"处理{account_type}的表格{table_idx + 1}，形状: {df.shape}")
                 
-                # 打印表格内容
-                logger.info(f"表格{table_idx + 1}内容:")
-                logger.info(f"表格DataFrame:\n{df.to_string()}")
+                # 输出原始表格数据
+                print(f"\n--- 表格 {table_idx + 1} 原始数据 ---")
+                print("表格形状:", df.shape)
+                print("前10行数据:")
+                print(df.head(10).to_string())
                 
                 # 检查表格是否包含交易数据的特征
-                table_text = df.to_string()
-                logger.info(f"表格{table_idx + 1}文本内容:\n{table_text}")
-                
-                has_transaction_features = self.check_transaction_features(table_text)
+                has_transaction_features = self.check_transaction_features(df)
+                print(f"包含交易特征: {has_transaction_features}")
                 
                 if not has_transaction_features:
-                    logger.info(f"表格{table_idx + 1}不包含交易数据特征，跳过")
                     continue
                 
-                # 更精确的表格过滤：检查表格内容是否属于当前账户类型的文本区域
-                if not self.is_table_in_account_section(table_text, account_type, page_info):
-                    logger.info(f"表格{table_idx + 1}不在{account_type}账户的文本区域内，跳过")
-                    continue
+                # 检查表格内容是否属于当前账户类型的文本区域
+                table_text = df.to_string()
+                is_in_section = self.is_table_in_account_section(table_text, account_type, page_info)
+                print(f"属于{account_type}区域: {is_in_section}")
                 
-                logger.info(f"表格{table_idx + 1}通过所有过滤条件，开始提取交易记录")
+                if not is_in_section:
+                    continue
                 
                 # 提取表格中的交易记录
                 table_transactions = self.extract_transactions_from_table(df, account_type, table_idx + 1)
-                transactions.extend(table_transactions)
+                print(f"提取到 {len(table_transactions)} 条交易记录")
                 
-                logger.info(f"从表格{table_idx + 1}提取了{len(table_transactions)}条交易记录")
+                # 输出提取的交易记录
+                for i, trans in enumerate(table_transactions[:3]):  # 只显示前3条
+                    print(f"交易 {i+1}: {trans}")
+                
+                transactions.extend(table_transactions)
         
         except Exception as e:
             logger.error(f"从第{page_num}页提取{account_type}交易记录时出错: {str(e)}")
-            # 尝试使用pdfplumber作为回退
-            transactions = self.extract_transactions_fallback(pdf_path, page_num, account_type, page_info)
+            print(f"错误: {str(e)}")
         
         return transactions
+    
+    def check_transaction_features(self, df):
+        """检查表格是否包含交易特征"""
+        transaction_indicators = [
+            "Date", "Transaction", "Details", "Deposit", "Withdrawal", "Balance",
+            "日期", "交易", "存款", "取款", "余额", "CCY", "B/F BALANCE", "CREDIT INTEREST"
+        ]
+        
+        found_indicators = []
+        for idx, row in df.iterrows():
+            row_text = " ".join([str(cell) for cell in row.values if pd.notna(cell) and str(cell).strip()]).upper()
+            for indicator in transaction_indicators:
+                if indicator.upper() in row_text and indicator not in found_indicators:
+                    found_indicators.append(indicator)
+        
+        return len(found_indicators) >= 3
     
     def is_table_in_account_section(self, table_text, account_type, page_info):
         """检查表格是否在指定账户类型的文本区域内"""
@@ -225,151 +283,321 @@ class HSBCParser(BankParser):
         
         for exclude_keyword in exclude_keywords:
             if exclude_keyword.upper() in table_text_upper:
-                logger.info(f"表格包含排除关键词'{exclude_keyword}'，跳过")
                 return False
         
         # 检查表格是否包含当前账户类型的关键词
         current_keywords = self.account_keywords.get(account_type, [])
-        has_current_keyword = False
         for keyword in current_keywords:
             if keyword.upper() in table_text_upper:
-                has_current_keyword = True
-                logger.info(f"表格包含{account_type}关键词'{keyword}'")
-                break
-        
-        # 如果包含当前账户类型的关键词，则接受（即使同时包含其他账户类型）
-        if has_current_keyword:
-            logger.info(f"表格包含{account_type}关键词，接受处理")
-            return True
+                return True
         
         # 如果不包含当前账户类型关键词，则检查是否在文本区域内
         text_section = page_info.get('text_section', '')
-        
-        # 简单的文本重叠检查：如果表格中的某些关键内容出现在账户文本区域中
         table_lines = table_text.split('\n')
         for line in table_lines[:5]:  # 检查表格前5行
             line = line.strip()
-            if len(line) > 10 and line in text_section:  # 长度大于10的行且在文本区域中
-                logger.info(f"表格内容与{account_type}文本区域重叠，接受")
+            if len(line) > 10 and line in text_section:
                 return True
         
-        logger.info(f"表格不属于{account_type}账户区域，跳过")
         return False
     
-    def check_transaction_features(self, table_text):
-        """检查表格是否包含交易数据的特征"""
-        # 检查表格文本中是否包含交易指示词
-        transaction_indicators = [
-            "Date", "日期", "Transaction", "交易", "Details", "详情", 
-            "Deposit", "存款", "Withdrawal", "取款", "Balance", "余额",
-            "Debit", "借方", "Credit", "贷方", "Amount", "金额"
-        ]
+    def parse(self, pdf_path_or_obj):
+        """解析汇丰银行PDF账单"""
+        all_transactions = []
         
-        table_text_upper = table_text.upper()
+        try:
+            # 获取PDF路径和对象
+            if isinstance(pdf_path_or_obj, str):
+                pdf_path = pdf_path_or_obj
+                with pdfplumber.open(pdf_path) as pdf:
+                    pdf_obj = pdf
+            else:
+                pdf_obj = pdf_path_or_obj
+                pdf_path = getattr(pdf_obj, 'stream', None)
+                if hasattr(pdf_path, 'name'):
+                    pdf_path = pdf_path.name
+                else:
+                    return all_transactions
+            
+            # 遍历账户类型
+            for account_type in self.target_account_types:
+                account_pages = self.find_account_pages(pdf_obj, account_type)
+                
+                if not account_pages:
+                    continue
+                
+                # 从找到的页面提取交易记录
+                for page_info in account_pages:
+                    page_num = page_info['page']
+                    transactions = self.extract_account_transactions(pdf_path, page_num, account_type, page_info)
+                    
+                    if transactions:
+                        all_transactions.extend(transactions)
         
-        # 至少需要包含2个交易指示词才认为是交易表格
-        indicator_count = 0
-        found_indicators = []
-        for indicator in transaction_indicators:
-            if indicator.upper() in table_text_upper:
-                indicator_count += 1
-                found_indicators.append(indicator)
-                if indicator_count >= 2:
-                    logger.info(f"表格包含交易特征关键词: {found_indicators}")
-                    return True
+        except Exception as e:
+            logger.error(f"解析汇丰银行PDF时出错: {str(e)}")
         
-        logger.info(f"表格不包含足够的交易特征关键词，仅找到: {found_indicators}")
-        return False
+        return all_transactions
     
     def extract_transactions_from_table(self, df, account_type, table_idx):
         """从表格中提取指定账户类型的交易记录"""
         transactions = []
         
         try:
-            # 使用split_table_by_account_type方法分割表格
-            account_sections = self.split_table_by_account_type(df, account_type)
+            # 添加调试输出
+            print(f"\n=== 解析表格 {table_idx} (目标账户类型: {account_type}) ===")
+            print(f"表格形状: {df.shape}")
             
-            if not account_sections:
-                logger.warning(f"在表格{table_idx}中未找到{account_type}账户数据")
-                return transactions
+            # 初始化状态跟踪变量
+            last_currency = "HKD"
+            last_date = None
             
-            # 处理每个账户部分
-            for section_start, section_end in account_sections:
-                logger.info(f"处理{account_type}账户数据：第{section_start}行到第{section_end}行")
+            # 查找包含交易数据的行，并识别实际的账户类型
+            for idx, row in df.iterrows():
+                row_text = " ".join([str(cell) for cell in row.values if pd.notna(cell) and str(cell).strip()])
                 
-                # 提取该部分的数据
-                section_df = df.iloc[section_start:section_end+1].copy().reset_index(drop=True)
-                
-                # 查找表头行
-                header_row_idx = None
-                for idx, row in section_df.iterrows():
-                    row_text = " ".join([str(cell) for cell in row.values if pd.notna(cell) and str(cell).strip()]).upper()
-                    header_keywords = ["DATE", "TRANSACTION", "DETAILS", "DEPOSIT", "WITHDRAWAL", "BALANCE", "日期", "交易", "存款", "取款", "余额", "CCY"]
-                    if any(keyword in row_text for keyword in header_keywords):
-                        header_row_idx = idx
-                        logger.info(f"在{account_type}部分找到表头行{idx}: {row.values}")
-                        break
-                
-                if header_row_idx is None:
-                    logger.warning(f"{account_type}部分未找到明确表头，跳过")
-                    continue
-                
-                # 设置列名
-                headers = [self.clean_text(str(cell)) for cell in section_df.iloc[header_row_idx].values]
-                section_df.columns = headers
-                data_df = section_df.iloc[header_row_idx + 1:].reset_index(drop=True)
-                
-                # 查找关键列
-                date_col = self._find_column_name(headers, ["Date", "日期", "交易日期", "Transaction Date", "CCY Date Transaction Details", "货币 日期 进支详情"])
-                details_col = self._find_column_name(headers, ["Transaction Details", "交易详情", "Details", "Description", "说明", "摘要", "CCY Date Transaction Details", "货币 日期 进支详情"])
-                deposit_col = self._find_column_name(headers, ["Deposit", "存款", "贷方", "Credit", "收入", "存入"])
-                withdrawal_col = self._find_column_name(headers, ["Withdrawal", "取款", "借方", "Debit", "支出", "提取"])
-                balance_col = self._find_column_name(headers, ["Balance", "余额", "结余"])
-                
-                logger.info(f"{account_type}列名 - Date: {date_col}, Details: {details_col}, Deposit: {deposit_col}, Withdrawal: {withdrawal_col}, Balance: {balance_col}")
-                
-                # 处理数据行
-                for idx, row in data_df.iterrows():
-                    # 获取原始数据
-                    raw_details = str(row[details_col]) if details_col and details_col in row.index else ""
-                    raw_deposit = str(row[deposit_col]) if deposit_col and deposit_col in row.index else ""
-                    raw_withdrawal = str(row[withdrawal_col]) if withdrawal_col and withdrawal_col in row.index else ""
-                    raw_balance = str(row[balance_col]) if balance_col and balance_col in row.index else ""
+                # 检查是否包含日期模式和交易信息
+                if re.search(r'\d{1,2}\s+[A-Za-z]{3}', row_text) and ('BALANCE' in row_text or 'CREDIT' in row_text or 'DEBIT' in row_text or 'DEPOSIT' in row_text):
                     
-                    logger.info(f"处理第{idx}行原始数据: Details='{raw_details}', Deposit='{raw_deposit}', Withdrawal='{raw_withdrawal}', Balance='{raw_balance}'")
+                    # 识别该行数据实际属于哪个账户类型
+                    actual_account_type = self._identify_account_type_from_context(row_text, idx, df)
                     
-                    # 检查是否包含换行符，表示多个交易
-                    if "\n" in raw_details or "\n" in raw_balance:
-                        transactions.extend(self._parse_multi_transaction_row(
-                            raw_details, raw_deposit, raw_withdrawal, raw_balance, account_type
-                        ))
+                    # 只处理属于目标账户类型的数据
+                    if actual_account_type == account_type:
+                        print(f"\n找到{account_type}交易行 {idx}: {row_text[:200]}...")
+                        
+                        # 解析混合格式的交易数据
+                        parsed_transactions, last_currency, last_date = self._parse_mixed_format_row(row_text, actual_account_type, last_currency, last_date)
+                        transactions.extend(parsed_transactions)
+                        
+                        print(f"从该行提取到 {len(parsed_transactions)} 条{actual_account_type}交易")
                     else:
-                        # 处理单个交易
-                        transaction = self._parse_single_transaction_row(
-                            raw_details, raw_deposit, raw_withdrawal, raw_balance, account_type
-                        )
-                        if transaction:
-                            transactions.append(transaction)
+                        print(f"\n跳过非{account_type}数据 (实际类型: {actual_account_type}): {row_text[:100]}...")
         
         except Exception as e:
             logger.error(f"从表格{table_idx}提取{account_type}交易记录时出错: {str(e)}")
+            print(f"解析错误: {str(e)}")
         
         return transactions
+    
+    def _identify_account_type_from_context(self, row_text, row_idx, df):
+        """根据上下文识别交易数据实际属于的账户类型"""
+        try:
+            # 向上查找最近的账户类型标识
+            for i in range(row_idx, -1, -1):
+                context_row = " ".join([str(cell) for cell in df.iloc[i].values if pd.notna(cell) and str(cell).strip()])
+                
+                # 检查港币往来
+                if any(keyword in context_row for keyword in self.account_keywords.get("港币往来", [])):
+                    return "港币往来"
+                
+                # 检查港币储蓄
+                if any(keyword in context_row for keyword in self.account_keywords.get("港币储蓄", [])):
+                    return "港币储蓄"
+                
+                # 检查外币储蓄
+                if any(keyword in context_row for keyword in self.account_keywords.get("外币储蓄", [])):
+                    return "外币储蓄"
+                
+                # 如果找到了货币代码，可能是外币储蓄
+                if re.search(r'\b(USD|GBP|EUR|JPY|CNY)\b', context_row):
+                    return "外币储蓄"
+            
+            # 如果在当前行中包含货币代码，判断为外币储蓄
+            if re.search(r'\b(USD|GBP|EUR|JPY|CNY)\b', row_text):
+                return "外币储蓄"
+            
+            # 默认返回港币往来（如果无法确定）
+            return "港币往来"
+            
+        except Exception as e:
+            logger.error(f"识别账户类型时出错: {str(e)}")
+            return "港币往来"  # 默认值
+    
+    def _parse_mixed_format_row(self, row_text, account_type, last_currency="HKD", last_date=None):
+        """解析混合格式的交易行数据"""
+        transactions = []
+        current_currency = last_currency  # 继承上一行的货币类型
+        current_date = last_date  # 继承上一行的日期
+        
+        try:
+            # 按换行符分割文本
+            parts = row_text.split('\n')
+            
+            # 检测货币类型
+            detected_currency = current_currency  # 默认使用继承的货币类型
+            if account_type == "外币储蓄":
+                # 查找货币代码
+                for part in parts:
+                    currency_match = re.search(r'\b(USD|GBP|EUR|JPY|CNY)\b', part)
+                    if currency_match:
+                        detected_currency = currency_match.group(1)
+                        current_currency = detected_currency  # 更新当前货币类型
+                        break
+            
+            # 查找日期和交易详情的模式
+            i = 0
+            while i < len(parts):
+                part = parts[i].strip()
+                
+                # 跳过货币代码行
+                if re.match(r'^(USD|GBP|EUR|JPY|CNY)$', part):
+                    i += 1
+                    continue
+                
+                # 查找日期模式
+                date_match = re.search(r'(\d{1,2}\s+[A-Za-z]{3})', part)
+                if date_match:
+                    date_value = date_match.group(1)
+                    current_date = date_value  # 更新当前日期
+                    
+                    # 提取交易描述 - 改进逻辑
+                    transaction_desc = ""
+                    if date_match.end() < len(part):
+                        remaining_text = part[date_match.end():].strip()
+                        # 移除多余的文字如"提取"、"结余"
+                        remaining_text = re.sub(r'\s*(提取|结余)\s*', ' ', remaining_text).strip()
+                        transaction_desc = remaining_text
+                    
+                    # 查找下一行的交易详情
+                    if i + 1 < len(parts):
+                        next_part = parts[i + 1].strip()
+                        # 检查是否是交易描述而不是金额或货币代码
+                        if (next_part and 
+                            not re.match(r'^[\d,]+\.\d{2}$', next_part) and 
+                            not re.search(r'\d{1,2}\s+[A-Za-z]{3}', next_part) and
+                            not re.match(r'^(USD|GBP|EUR|JPY|CNY)$', next_part)):
+                            # 常见的交易描述关键词
+                            if any(keyword in next_part for keyword in ['BALANCE', 'CREDIT', 'INTEREST', 'DEPOSIT', 'WITHDRAWAL', 'TRANSFER']):
+                                if transaction_desc:
+                                    transaction_desc += " " + next_part
+                                else:
+                                    transaction_desc = next_part
+                                i += 1
+                    
+                    # 清理和标准化交易描述
+                    if transaction_desc:
+                        # 标准化常见术语
+                        transaction_desc = re.sub(r'B/F\s*BALANCE', 'B/F BALANCE 承前结余', transaction_desc)
+                        transaction_desc = re.sub(r'CREDIT\s*INTEREST', 'CREDIT INTEREST 利息收入', transaction_desc)
+                        transaction_desc = re.sub(r'^DEPOSIT$', 'DEPOSIT 存款', transaction_desc)
+                        
+                        # 移除多余的空格
+                        transaction_desc = re.sub(r'\s+', ' ', transaction_desc).strip()
+                    
+                    # 查找金额信息
+                    deposit_amount = 0.0
+                    withdrawal_amount = 0.0
+                    balance_value = 0.0
+                    
+                    # 在当前行和后续行查找金额
+                    amount_text = row_text[row_text.find(date_value):]
+                    amounts = re.findall(r'([\d,]+\.\d{2})', amount_text)
+                    
+                    if amounts:
+                        # 根据交易类型分配金额
+                        if 'CREDIT' in transaction_desc or '利息' in transaction_desc:
+                            deposit_amount = self.parse_amount(amounts[0])
+                            if len(amounts) > 1:
+                                balance_value = self.parse_amount(amounts[-1])
+                        elif 'DEPOSIT' in transaction_desc and 'B/F' not in transaction_desc:
+                            deposit_amount = self.parse_amount(amounts[0])
+                            if len(amounts) > 1:
+                                balance_value = self.parse_amount(amounts[-1])
+                        elif 'WITHDRAWAL' in transaction_desc or 'DEBIT' in transaction_desc:
+                            withdrawal_amount = self.parse_amount(amounts[0])
+                            if len(amounts) > 1:
+                                balance_value = self.parse_amount(amounts[-1])
+                        else:
+                            # B/F BALANCE 或其他情况
+                            balance_value = self.parse_amount(amounts[0])
+                    
+                    # 创建交易记录
+                    if transaction_desc and transaction_desc not in ['提取', '结余', '存入', '承前转结']:
+                        transaction = {
+                            "账户类型": account_type,
+                            "银行名称": self.bank_name,
+                            "Date": date_value,
+                            "Transaction Details": transaction_desc,
+                            "Deposit": deposit_amount,
+                            "Withdrawal": withdrawal_amount,
+                            "Balance": balance_value,
+                            "Currency": detected_currency
+                        }
+                        
+                        transactions.append(transaction)
+                        print(f"创建{account_type}交易: {date_value} - {transaction_desc} - {detected_currency} - 余额: {balance_value}")
+                
+                else:
+                    # 当前行没有日期，但可能有交易信息
+                    # 使用继承的日期和货币类型
+                    if current_date and part and not re.match(r'^(USD|GBP|EUR|JPY|CNY)$', part):
+                        # 检查是否包含交易关键词
+                        if any(keyword in part for keyword in ['BALANCE', 'CREDIT', 'INTEREST', 'DEPOSIT', 'WITHDRAWAL', 'TRANSFER']):
+                            transaction_desc = part
+                            
+                            # 标准化交易描述
+                            transaction_desc = re.sub(r'B/F\s*BALANCE', 'B/F BALANCE 承前结余', transaction_desc)
+                            transaction_desc = re.sub(r'CREDIT\s*INTEREST', 'CREDIT INTEREST 利息收入', transaction_desc)
+                            transaction_desc = re.sub(r'^DEPOSIT$', 'DEPOSIT 存款', transaction_desc)
+                            transaction_desc = re.sub(r'\s+', ' ', transaction_desc).strip()
+                            
+                            # 查找金额信息
+                            deposit_amount = 0.0
+                            withdrawal_amount = 0.0
+                            balance_value = 0.0
+                            
+                            amounts = re.findall(r'([\d,]+\.\d{2})', part)
+                            if amounts:
+                                if 'CREDIT' in transaction_desc or '利息' in transaction_desc:
+                                    deposit_amount = self.parse_amount(amounts[0])
+                                    if len(amounts) > 1:
+                                        balance_value = self.parse_amount(amounts[-1])
+                                elif 'DEPOSIT' in transaction_desc and 'B/F' not in transaction_desc:
+                                    deposit_amount = self.parse_amount(amounts[0])
+                                    if len(amounts) > 1:
+                                        balance_value = self.parse_amount(amounts[-1])
+                                elif 'WITHDRAWAL' in transaction_desc or 'DEBIT' in transaction_desc:
+                                    withdrawal_amount = self.parse_amount(amounts[0])
+                                    if len(amounts) > 1:
+                                        balance_value = self.parse_amount(amounts[-1])
+                                else:
+                                    balance_value = self.parse_amount(amounts[0])
+                            
+                            # 创建交易记录（使用继承的日期和货币类型）
+                            if transaction_desc and transaction_desc not in ['提取', '结余', '存入', '承前转结']:
+                                transaction = {
+                                    "账户类型": account_type,
+                                    "银行名称": self.bank_name,
+                                    "Date": current_date,  # 使用继承的日期
+                                    "Transaction Details": transaction_desc,
+                                    "Deposit": deposit_amount,
+                                    "Withdrawal": withdrawal_amount,
+                                    "Balance": balance_value,
+                                    "Currency": current_currency  # 使用继承的货币类型
+                                }
+                                
+                                transactions.append(transaction)
+                                print(f"创建{account_type}交易(继承): {current_date} - {transaction_desc} - {current_currency} - 余额: {balance_value}")
+                
+                i += 1
+        
+        except Exception as e:
+            logger.error(f"解析混合格式行时出错: {str(e)}")
+            print(f"解析错误: {str(e)}")
+        
+        return transactions, current_currency, current_date  # 返回更新后的状态
     
     def _parse_multi_transaction_row(self, details_text, deposit_text, withdrawal_text, balance_text, account_type):
         """解析包含多个交易的行"""
         transactions = []
         
         try:
-            # 分割各个字段
             detail_parts = details_text.split("\n") if details_text else []
             deposit_parts = deposit_text.split("\n") if deposit_text else []
             withdrawal_parts = withdrawal_text.split("\n") if withdrawal_text else []
             balance_parts = balance_text.split("\n") if balance_text else []
             
-            logger.info(f"分割后的数据: Details={detail_parts}, Deposit={deposit_parts}, Withdrawal={withdrawal_parts}, Balance={balance_parts}")
-            
-            # 处理每个交易部分
             i = 0
             while i < len(detail_parts):
                 detail_part = detail_parts[i].strip()
@@ -378,20 +606,18 @@ class HSBCParser(BankParser):
                     i += 1
                     continue
                 
-                # 检查是否为货币代码行（如USD, GBP等）
+                # 跳过货币代码行
                 if re.match(r'^[A-Z]{3}$', detail_part):
-                    currency = detail_part
                     i += 1
                     continue
                 
-                # 尝试解析日期和交易描述
+                # 解析日期和交易描述
                 date_match = re.search(r'(\d{1,2}\s+[A-Za-z]{3})', detail_part)
                 if date_match:
                     date_value = self.parse_date(date_match.group(1))
                     if not date_value:
                         date_value = date_match.group(1)
                     
-                    # 提取交易描述（日期后的部分）
                     transaction_desc = detail_part[date_match.end():].strip()
                     
                     # 查找对应的金额和余额
@@ -399,21 +625,17 @@ class HSBCParser(BankParser):
                     withdrawal_amount = 0.0
                     balance_value = 0.0
                     
-                    # 从存款列查找金额
                     if i < len(deposit_parts) and deposit_parts[i].strip():
                         deposit_amount = self.parse_amount(deposit_parts[i])
                     
-                    # 从取款列查找金额
                     if i < len(withdrawal_parts) and withdrawal_parts[i].strip():
                         withdrawal_amount = self.parse_amount(withdrawal_parts[i])
                     
-                    # 从余额列查找余额
                     if i < len(balance_parts) and balance_parts[i].strip():
                         balance_value = self.parse_amount(balance_parts[i])
                     
                     # 特殊处理利息收入
                     if "CREDIT INTEREST" in transaction_desc or "利息收入" in transaction_desc:
-                        # 在交易描述中查找金额
                         amount_in_desc = re.search(r'([\d,]+\.\d{2})', transaction_desc)
                         if amount_in_desc and deposit_amount == 0.0:
                             deposit_amount = self.parse_amount(amount_in_desc.group(1))
@@ -431,7 +653,6 @@ class HSBCParser(BankParser):
                     }
                     
                     transactions.append(transaction)
-                    logger.info(f"添加{account_type}多行交易记录: {transaction}")
                 
                 i += 1
         
@@ -445,36 +666,51 @@ class HSBCParser(BankParser):
         try:
             transaction_details = self.clean_text(details_text)
             
-            # 过滤不需要的记录
+            # 添加调试输出
+            print(f"\n解析单行交易:")
+            print(f"原始详情: '{details_text}'")
+            print(f"清理后详情: '{transaction_details}'")
+            print(f"存款: '{deposit_text}', 取款: '{withdrawal_text}', 余额: '{balance_text}'")
+            
             if self.should_filter_transaction(transaction_details):
+                print("交易被过滤")
                 return None
             
-            # 尝试解析日期
+            # 改进日期匹配逻辑
             date_match = re.search(r'(\d{1,2}\s+[A-Za-z]{3})', transaction_details)
             if not date_match:
+                print("未找到日期匹配")
                 return None
             
             date_value = self.parse_date(date_match.group(1))
             if not date_value:
                 date_value = date_match.group(1)
             
-            # 创建交易记录
+            # 提取交易描述（去除日期部分）
+            transaction_desc = transaction_details[date_match.end():].strip()
+            if not transaction_desc:
+                transaction_desc = transaction_details
+            
+            print(f"提取的日期: '{date_value}'")
+            print(f"提取的描述: '{transaction_desc}'")
+            
             transaction = {
                 "账户类型": account_type,
                 "银行名称": self.bank_name,
                 "Date": date_value,
-                "Transaction Details": transaction_details,
+                "Transaction Details": transaction_desc,
                 "Deposit": self.parse_amount(deposit_text),
                 "Withdrawal": self.parse_amount(withdrawal_text),
                 "Balance": self.parse_amount(balance_text),
                 "Currency": self.extract_currency_from_details(transaction_details, account_type)
             }
             
-            logger.info(f"添加{account_type}单行交易记录: {transaction}")
+            print(f"生成的交易记录: {transaction}")
             return transaction
         
         except Exception as e:
             logger.error(f"解析单交易行时出错: {str(e)}")
+            print(f"解析错误: {str(e)}")
             return None
     
     def split_table_by_account_type(self, df, target_account_type):
@@ -482,25 +718,19 @@ class HSBCParser(BankParser):
         account_sections = []
         
         try:
-            # 查找目标账户类型的起始行
             target_keywords = self.account_keywords.get(target_account_type, [])
             
             for idx, row in df.iterrows():
                 row_text = " ".join([str(cell) for cell in row.values if pd.notna(cell) and str(cell).strip()])
                 
-                # 检查是否包含目标账户类型关键词
                 for keyword in target_keywords:
                     if keyword in row_text:
-                        logger.info(f"在第{idx}行找到{target_account_type}账户标题: {keyword}")
+                        end_idx = len(df) - 1
                         
-                        # 查找该账户部分的结束位置
-                        end_idx = len(df) - 1  # 默认到表格末尾
-                        
-                        # 查找下一个账户类型的开始位置或"Total No. of Deposits"标记
+                        # 查找下一个账户类型的开始位置
                         for next_idx in range(idx + 1, len(df)):
                             next_row_text = " ".join([str(cell) for cell in df.iloc[next_idx].values if pd.notna(cell) and str(cell).strip()])
                             
-                            # 检查是否遇到其他账户类型
                             found_other_account = False
                             for other_account in self.target_account_types:
                                 if other_account != target_account_type:
@@ -513,16 +743,10 @@ class HSBCParser(BankParser):
                                 if found_other_account:
                                     break
                             
-                            if found_other_account:
-                                break
-                            
-                            # 检查是否遇到"Total No. of Deposits"标记
-                            if "Total No. of Deposits" in next_row_text:
-                                end_idx = next_idx
+                            if found_other_account or "Total No. of Deposits" in next_row_text:
                                 break
                         
                         account_sections.append((idx, end_idx))
-                        logger.info(f"{target_account_type}账户数据范围: 第{idx}行到第{end_idx}行")
                         break
         
         except Exception as e:
@@ -530,67 +754,8 @@ class HSBCParser(BankParser):
         
         return account_sections
     
-    def should_filter_transaction(self, transaction_details):
-        """判断是否过滤交易记录"""
-        if not transaction_details or transaction_details.strip() == "":
-            return True
-        
-        # 检查是否包含过滤关键词
-        for keyword in self.filter_keywords:
-            if keyword.lower() in transaction_details.lower():
-                return True
-        
-        return False
-    
-    def extract_currency_from_details(self, transaction_details, account_type):
-        """从交易详情中提取货币类型"""
-        # 港币账户默认为HKD
-        if "港币" in account_type:
-            return "HKD"
-        
-        # 外币账户需要从详情中提取
-        if "外币" in account_type:
-            # 查找CCY字段
-            ccy_match = re.search(r'CCY[:\s]*([A-Z]{3})', transaction_details)
-            if ccy_match:
-                return ccy_match.group(1)
-            
-            # 查找常见货币代码
-            currency_codes = ["USD", "EUR", "GBP", "JPY", "CNY", "SGD", "AUD", "CAD"]
-            for code in currency_codes:
-                if code in transaction_details.upper():
-                    return code
-            
-            # 默认为USD
-            return "USD"
-        
-        return "HKD"  # 默认货币
-    
-    def extract_transactions_fallback(self, pdf_path, page_num, account_type, page_info):
-        """使用pdfplumber作为回退方案"""
-        transactions = []
-        
-        try:
-            with pdfplumber.open(pdf_path) as pdf:
-                if page_num <= len(pdf.pages):
-                    page = pdf.pages[page_num - 1]
-                    tables = page.extract_tables()
-                    
-                    for table in tables:
-                        if not table:
-                            continue
-                        
-                        # 类似的处理逻辑...
-                        # 这里可以复用之前的fallback逻辑
-                        pass
-        
-        except Exception as e:
-            logger.error(f"使用pdfplumber提取交易记录时出错: {str(e)}")
-        
-        return transactions
-    
     def parse(self, pdf_path_or_obj):
-        """解析汇丰银行PDF账单 - 使用两层循环结构"""
+        """解析汇丰银行PDF账单"""
         all_transactions = []
         
         try:
@@ -605,35 +770,264 @@ class HSBCParser(BankParser):
                 if hasattr(pdf_path, 'name'):
                     pdf_path = pdf_path.name
                 else:
-                    logger.error("无法获取PDF文件路径，无法使用Camelot")
                     return all_transactions
             
-            # 第一层循环：遍历账户类型
+            # 遍历账户类型
             for account_type in self.target_account_types:
-                logger.info(f"开始处理账户类型: {account_type}")
-                
-                # 查找当前账户类型的页面和位置
                 account_pages = self.find_account_pages(pdf_obj, account_type)
                 
                 if not account_pages:
-                    logger.info(f"未找到{account_type}账户")
                     continue
                 
-                # 第二层循环：从找到的页面提取交易记录
+                # 从找到的页面提取交易记录
                 for page_info in account_pages:
                     page_num = page_info['page']
-                    logger.info(f"从第{page_num}页提取{account_type}账户的交易记录")
-                    
-                    # 提取该页面该账户类型的交易记录
                     transactions = self.extract_account_transactions(pdf_path, page_num, account_type, page_info)
                     
                     if transactions:
                         all_transactions.extend(transactions)
-                        logger.info(f"从第{page_num}页的{account_type}账户提取了{len(transactions)}条交易记录")
-                    else:
-                        logger.info(f"第{page_num}页的{account_type}账户未提取到交易记录")
+        
+        except Exception as e:
+            logger.error(f"解析汇丰银行PDF时出错: {str(e)}")
+        
+        return all_transactions
+    
+
+    
+    def _identify_account_type_from_context(self, row_text, row_idx, df):
+        """根据上下文识别交易数据实际属于的账户类型"""
+        try:
+            # 向上查找最近的账户类型标识
+            for i in range(row_idx, -1, -1):
+                context_row = " ".join([str(cell) for cell in df.iloc[i].values if pd.notna(cell) and str(cell).strip()])
                 
-                logger.info(f"{account_type}账户总共提取了{len([t for t in all_transactions if t.get('账户类型') == account_type])}条交易记录")
+                # 检查港币往来
+                if any(keyword in context_row for keyword in self.account_keywords.get("港币往来", [])):
+                    return "港币往来"
+                
+                # 检查港币储蓄
+                if any(keyword in context_row for keyword in self.account_keywords.get("港币储蓄", [])):
+                    return "港币储蓄"
+                
+                # 检查外币储蓄
+                if any(keyword in context_row for keyword in self.account_keywords.get("外币储蓄", [])):
+                    return "外币储蓄"
+                
+                # 如果找到了货币代码，可能是外币储蓄
+                if re.search(r'\b(USD|GBP|EUR|JPY|CNY)\b', context_row):
+                    return "外币储蓄"
+            
+            # 如果在当前行中包含货币代码，判断为外币储蓄
+            if re.search(r'\b(USD|GBP|EUR|JPY|CNY)\b', row_text):
+                return "外币储蓄"
+            
+            # 默认返回港币往来（如果无法确定）
+            return "港币往来"
+            
+        except Exception as e:
+            logger.error(f"识别账户类型时出错: {str(e)}")
+            return "港币往来"  # 默认值
+    
+
+    
+    def _parse_multi_transaction_row(self, details_text, deposit_text, withdrawal_text, balance_text, account_type):
+        """解析包含多个交易的行"""
+        transactions = []
+        
+        try:
+            detail_parts = details_text.split("\n") if details_text else []
+            deposit_parts = deposit_text.split("\n") if deposit_text else []
+            withdrawal_parts = withdrawal_text.split("\n") if withdrawal_text else []
+            balance_parts = balance_text.split("\n") if balance_text else []
+            
+            i = 0
+            while i < len(detail_parts):
+                detail_part = detail_parts[i].strip()
+                
+                if not detail_part:
+                    i += 1
+                    continue
+                
+                # 跳过货币代码行
+                if re.match(r'^[A-Z]{3}$', detail_part):
+                    i += 1
+                    continue
+                
+                # 解析日期和交易描述
+                date_match = re.search(r'(\d{1,2}\s+[A-Za-z]{3})', detail_part)
+                if date_match:
+                    date_value = self.parse_date(date_match.group(1))
+                    if not date_value:
+                        date_value = date_match.group(1)
+                    
+                    transaction_desc = detail_part[date_match.end():].strip()
+                    
+                    # 查找对应的金额和余额
+                    deposit_amount = 0.0
+                    withdrawal_amount = 0.0
+                    balance_value = 0.0
+                    
+                    if i < len(deposit_parts) and deposit_parts[i].strip():
+                        deposit_amount = self.parse_amount(deposit_parts[i])
+                    
+                    if i < len(withdrawal_parts) and withdrawal_parts[i].strip():
+                        withdrawal_amount = self.parse_amount(withdrawal_parts[i])
+                    
+                    if i < len(balance_parts) and balance_parts[i].strip():
+                        balance_value = self.parse_amount(balance_parts[i])
+                    
+                    # 特殊处理利息收入
+                    if "CREDIT INTEREST" in transaction_desc or "利息收入" in transaction_desc:
+                        amount_in_desc = re.search(r'([\d,]+\.\d{2})', transaction_desc)
+                        if amount_in_desc and deposit_amount == 0.0:
+                            deposit_amount = self.parse_amount(amount_in_desc.group(1))
+                    
+                    # 创建交易记录
+                    transaction = {
+                        "账户类型": account_type,
+                        "银行名称": self.bank_name,
+                        "Date": date_value,
+                        "Transaction Details": transaction_desc,
+                        "Deposit": deposit_amount,
+                        "Withdrawal": withdrawal_amount,
+                        "Balance": balance_value,
+                        "Currency": self.extract_currency_from_details(transaction_desc, account_type)
+                    }
+                    
+                    transactions.append(transaction)
+                
+                i += 1
+        
+        except Exception as e:
+            logger.error(f"解析多交易行时出错: {str(e)}")
+        
+        return transactions
+    
+    def _parse_single_transaction_row(self, details_text, deposit_text, withdrawal_text, balance_text, account_type):
+        """解析单个交易行"""
+        try:
+            transaction_details = self.clean_text(details_text)
+            
+            # 添加调试输出
+            print(f"\n解析单行交易:")
+            print(f"原始详情: '{details_text}'")
+            print(f"清理后详情: '{transaction_details}'")
+            print(f"存款: '{deposit_text}', 取款: '{withdrawal_text}', 余额: '{balance_text}'")
+            
+            if self.should_filter_transaction(transaction_details):
+                print("交易被过滤")
+                return None
+            
+            # 改进日期匹配逻辑
+            date_match = re.search(r'(\d{1,2}\s+[A-Za-z]{3})', transaction_details)
+            if not date_match:
+                print("未找到日期匹配")
+                return None
+            
+            date_value = self.parse_date(date_match.group(1))
+            if not date_value:
+                date_value = date_match.group(1)
+            
+            # 提取交易描述（去除日期部分）
+            transaction_desc = transaction_details[date_match.end():].strip()
+            if not transaction_desc:
+                transaction_desc = transaction_details
+            
+            print(f"提取的日期: '{date_value}'")
+            print(f"提取的描述: '{transaction_desc}'")
+            
+            transaction = {
+                "账户类型": account_type,
+                "银行名称": self.bank_name,
+                "Date": date_value,
+                "Transaction Details": transaction_desc,
+                "Deposit": self.parse_amount(deposit_text),
+                "Withdrawal": self.parse_amount(withdrawal_text),
+                "Balance": self.parse_amount(balance_text),
+                "Currency": self.extract_currency_from_details(transaction_details, account_type)
+            }
+            
+            print(f"生成的交易记录: {transaction}")
+            return transaction
+        
+        except Exception as e:
+            logger.error(f"解析单交易行时出错: {str(e)}")
+            print(f"解析错误: {str(e)}")
+            return None
+    
+    def split_table_by_account_type(self, df, target_account_type):
+        """根据账户类型分割表格，返回目标账户类型的行范围列表"""
+        account_sections = []
+        
+        try:
+            target_keywords = self.account_keywords.get(target_account_type, [])
+            
+            for idx, row in df.iterrows():
+                row_text = " ".join([str(cell) for cell in row.values if pd.notna(cell) and str(cell).strip()])
+                
+                for keyword in target_keywords:
+                    if keyword in row_text:
+                        end_idx = len(df) - 1
+                        
+                        # 查找下一个账户类型的开始位置
+                        for next_idx in range(idx + 1, len(df)):
+                            next_row_text = " ".join([str(cell) for cell in df.iloc[next_idx].values if pd.notna(cell) and str(cell).strip()])
+                            
+                            found_other_account = False
+                            for other_account in self.target_account_types:
+                                if other_account != target_account_type:
+                                    other_keywords = self.account_keywords.get(other_account, [])
+                                    for other_keyword in other_keywords:
+                                        if other_keyword in next_row_text:
+                                            end_idx = next_idx - 1
+                                            found_other_account = True
+                                            break
+                                if found_other_account:
+                                    break
+                            
+                            if found_other_account or "Total No. of Deposits" in next_row_text:
+                                break
+                        
+                        account_sections.append((idx, end_idx))
+                        break
+        
+        except Exception as e:
+            logger.error(f"分割表格时出错: {str(e)}")
+        
+        return account_sections
+    
+    def parse(self, pdf_path_or_obj):
+        """解析汇丰银行PDF账单"""
+        all_transactions = []
+        
+        try:
+            # 获取PDF路径和对象
+            if isinstance(pdf_path_or_obj, str):
+                pdf_path = pdf_path_or_obj
+                with pdfplumber.open(pdf_path) as pdf:
+                    pdf_obj = pdf
+            else:
+                pdf_obj = pdf_path_or_obj
+                pdf_path = getattr(pdf_obj, 'stream', None)
+                if hasattr(pdf_path, 'name'):
+                    pdf_path = pdf_path.name
+                else:
+                    return all_transactions
+            
+            # 遍历账户类型
+            for account_type in self.target_account_types:
+                account_pages = self.find_account_pages(pdf_obj, account_type)
+                
+                if not account_pages:
+                    continue
+                
+                # 从找到的页面提取交易记录
+                for page_info in account_pages:
+                    page_num = page_info['page']
+                    transactions = self.extract_account_transactions(pdf_path, page_num, account_type, page_info)
+                    
+                    if transactions:
+                        all_transactions.extend(transactions)
         
         except Exception as e:
             logger.error(f"解析汇丰银行PDF时出错: {str(e)}")
@@ -641,47 +1035,55 @@ class HSBCParser(BankParser):
         return all_transactions
     
     def save_to_excel(self, transactions, output_path, account_info=None):
-        """保存汇丰银行交易记录到Excel文件"""
+        """保存汇丰银行交易记录到Excel文件，按用户期望的格式"""
         try:
             if not transactions:
-                logger.warning("没有交易记录可保存")
                 return
             
-            # 创建DataFrame
+            # 确保所有交易记录都有必要的字段
+            for trans in transactions:
+                if '银行' not in trans and account_info:
+                    trans['银行'] = account_info.get('bank_name', self.bank_name)
+                if '文件名' not in trans and account_info:
+                    trans['文件名'] = account_info.get('file_name', '')
+            
+            # 创建DataFrame并重新排列列顺序以匹配用户期望
             df = pd.DataFrame(transactions)
             
-            # 按账户类型分组保存
-            if '账户类型' in df.columns:
-                # 创建ExcelWriter对象
-                with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-                    # 按账户类型分组
-                    for account_type, group in df.groupby('账户类型'):
-                        # 清理工作表名称（Excel工作表名称不能包含某些特殊字符）
-                        sheet_name = str(account_type).replace('/', '_').replace('\\', '_')[:31]
-                        group.to_excel(writer, sheet_name=sheet_name, index=False)
-                        logger.info(f"保存{account_type}账户的{len(group)}条记录到工作表'{sheet_name}'")
-                    
-                    # 创建汇总工作表
-                    df.to_excel(writer, sheet_name='汇总', index=False)
-                    logger.info(f"保存汇总的{len(df)}条记录到工作表'汇总'")
-            else:
-                # 如果没有账户类型列，直接保存
-                df.to_excel(output_path, index=False)
-                logger.info(f"保存{len(df)}条交易记录到{output_path}")
+            # 定义期望的列顺序
+            expected_columns = [
+                '账户类型', '银行名称', 'Date', 'Transaction Details', 
+                'Deposit', 'Withdrawal', 'Balance', 'Currency', '银行', '文件名'
+            ]
             
-            logger.info(f"成功保存汇丰银行交易记录到: {output_path}")
+            # 确保所有期望的列都存在
+            for col in expected_columns:
+                if col not in df.columns:
+                    df[col] = ''
+            
+            # 重新排列列顺序
+            df = df[expected_columns]
+            
+            # 按账户类型分组保存
+            if '账户类型' in df.columns and not df['账户类型'].isna().all():
+                with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+                    # 保存汇总表（所有数据）
+                    df.to_excel(writer, sheet_name='汇总', index=False)
+                    
+                    # 按账户类型分别保存
+                    for account_type, group in df.groupby('账户类型'):
+                        if not group.empty:
+                            sheet_name = str(account_type).replace('/', '_').replace('\\', '_')[:31]
+                            group.to_excel(writer, sheet_name=sheet_name, index=False)
+            else:
+                # 如果没有账户类型分组，直接保存
+                df.to_excel(output_path, index=False)
+            
+            logger.info(f"成功保存Excel文件: {output_path}")
             
         except Exception as e:
             logger.error(f"保存汇丰银行Excel文件时出错: {str(e)}")
             raise
-    
-    def _find_column_name(self, headers, possible_names):
-        """查找列名"""
-        for name in possible_names:
-            for header in headers:
-                if name.upper() in str(header).upper():
-                    return header
-        return None
 
 
 # 玉山银行解析器（占位符）
