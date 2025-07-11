@@ -1,7 +1,7 @@
 import os
 import logging
 from fuzzywuzzy import fuzz
-from bank_parsers import get_supported_banks
+from bank_parsers import get_available_parsers
 
 logger = logging.getLogger(__name__)
 
@@ -9,7 +9,7 @@ class PDFProcessor:
     """PDF处理器，用于银行类型检测"""
     
     def __init__(self):
-        self.supported_banks = get_supported_banks()
+        self.supported_banks = get_available_parsers()
         self.bank_keywords = {
             "玉山银行": ["玉山银行", "玉山", "E.SUN", "E. SUN", "E.SUN Bank", "E. SUN BANK", "E.SUN Commercial Bank", "E. SUN COMMERCIAL BANK", "ESUN", "ESUNHKHH", "玉山銀行"],
             "渣打银行": ["渣打", "SDB", "Shanghaidi Bank"],

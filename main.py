@@ -572,18 +572,18 @@ class BankStatementApp(ttk.Window):
                     if not self.is_processing:
                         return None
                     
-                    # 获取对应的银行解析器
-                    bank_parser = get_bank_parser(file_info["bank"])
-                    
-                    if bank_parser is None:
+                    # 获取对应的银行解析器实例
+                    parser_class = get_bank_parser(file_info["bank"])
+                    if parser_class is None:
                         self.queue.put(("log", f"错误: 不支持的银行类型 '{file_info['bank']}'，跳过文件 {file_info['name']}"))
                         self.queue.put(("update_status", (file_info["index"], file_info["name"], "失败")))
                         return None
+
+                    bank_parser = parser_class(file_info["path"])
                     
-                    # 处理PDF文件 - 直接使用银行解析器
+                    # 处理PDF文件
                     start_time = time.time()
-                    with pdfplumber.open(file_info["path"]) as pdf:
-                        transactions = bank_parser.parse(pdf)
+                    transactions = bank_parser.parse()
                     processing_time = time.time() - start_time
                     
                     if transactions:
@@ -598,10 +598,7 @@ class BankStatementApp(ttk.Window):
                         output_path = f"{base_name}_{file_info['bank']}_{os.path.splitext(file_info['name'])[0]}{file_ext}"
                         
                         # 让解析器直接保存文件
-                        bank_parser.save_to_excel(transactions, output_path, {
-                            'bank_name': file_info['bank'],
-                            'file_name': file_info['name']
-                        })
+                        bank_parser.save_to_excel(output_path)
                         
                         self.queue.put(("log", f"成功处理 {file_info['name']}，提取了 {len(transactions)} 条交易记录，耗时 {processing_time:.2f} 秒"))
                         self.queue.put(("log", f"文件已保存到: {output_path}"))
