@@ -6,6 +6,9 @@ from abc import ABC, abstractmethod
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.styles import Font, Alignment
+import pdfplumber
+import numpy as np
+from datetime import datetime
 
 class BankParser(ABC):
     """银行解析器抽象基类"""
@@ -53,244 +56,239 @@ class BankParser(ABC):
 
 
 class HSBCParser(BankParser):
-    """汇丰银行解析器"""
-    HKD_CURRENT_KEYWORDS = ['HKD Current', '港元往来', '港币往来']
-    HKD_SAVINGS_KEYWORDS = ['HKD Savings', '港元储蓄', '港币储蓄']
-    FOREIGN_SAVINGS_KEYWORDS = ['Foreign Currency Savings', '外币储蓄']
-    CURRENCY_CODES = ['USD', 'EUR', 'GBP', 'AUD', 'CAD', 'JPY', 'CHF', 'NZD', 'SGD']
-
     def __init__(self, file_path: str):
         super().__init__(file_path)
-        self.date_pattern = re.compile(r'\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))\b')
-        self.amount_pattern = re.compile(r'([\d,]+\.\d{2})')
-
-    def should_filter_transaction(self, description: str) -> bool:
-        """判断是否应过滤掉特定交易描述"""
-        filter_keywords = [
-            'Opening Balance', 'Closing Balance', 'Balance Brought Forward', 'Balance Carried Forward',
-            '账户结余', '期初余额', '期末余额',
-            'Total No. of Deposits', '存入次数总计', 'Total No. of Withdrawals', '提取次数总计',
-            'Total Deposit Amount', '存入总额', 'Total Withdrawal Amount', '提取总额'
-        ]
-        return any(keyword.lower() in description.lower() for keyword in filter_keywords)
-
-
-    def _extract_currency_from_text(self, text: str) -> str | None:
-        """从文本中提取货币代码"""
-        for code in self.CURRENCY_CODES:
-            if code in text:
-                return code
-        if 'HKD' in text or '港币' in text:
-            return 'HKD'
-        return None
-
-    def find_account_sections_on_page(self, tables: list, page_num: int) -> dict[str, list[tuple[int, int]]]:
-        """在单个页面中查找不同账户类型所在的表格和行范围"""
-        account_sections = {'港币往来': [], '港币储蓄': [], '外币储蓄': []}
-        for i, table_df in enumerate(tables):
-            current_account_type = None
-            start_row = -1
-
-            for row_index, row in table_df.iterrows():
-                row_text = ' '.join(map(str, row.tolist()))
-                new_account_type = None
-                if any(k.lower() in row_text.lower() for k in self.HKD_CURRENT_KEYWORDS):
-                    new_account_type = '港币往来'
-                elif any(k.lower() in row_text.lower() for k in self.HKD_SAVINGS_KEYWORDS):
-                    new_account_type = '港币储蓄'
-                elif any(k.lower() in row_text.lower() for k in self.FOREIGN_SAVINGS_KEYWORDS) or any(c in row_text for c in self.CURRENCY_CODES):
-                    new_account_type = '外币储蓄'
-
-                if new_account_type:
-                    if current_account_type and start_row != -1:
-                        account_sections[current_account_type].append((i, start_row, row_index - 1))
-                        self.logger.info(f"在第{page_num}页的表格{i+1}中找到 {current_account_type} 部分 (行 {start_row}-{row_index-1})")
-                    current_account_type = new_account_type
-                    start_row = row_index
-
-            if current_account_type and start_row != -1:
-                account_sections[current_account_type].append((i, start_row, len(table_df) - 1))
-                self.logger.info(f"在第{page_num}页的表格{i+1}中找到 {current_account_type} 部分 (行 {start_row}-{len(table_df)-1})")
-
-        return account_sections
-
-    def extract_account_transactions(self, tables: list, page_num: int, account_type: str, sections: list[tuple[int, int, int]]) -> list[dict]:
-        """从指定账户部分的表格中提取交易记录"""
-        page_transactions = []
-        self.logger.info(f"--- 解析 '{account_type}' 部分 ({len(sections)}个) ---")
-
-        for table_index, start_row, end_row in sections:
-            table_df = tables[table_index]
-            account_df = table_df.iloc[start_row:end_row + 1].copy()
-            transactions = self.extract_transactions_from_table(account_df, page_num, account_type)
-            page_transactions.extend(transactions)
-            self.logger.info(f"从该部分提取到 {len(transactions)} 条交易记录")
-
-        return page_transactions
-
-    def _is_structured_table(self, df: pd.DataFrame) -> bool:
-        """判断是否为结构化表格"""
-        if df.shape[1] < 3:
-            return False
-        header_text = ' '.join(map(str, df.columns)).lower() + ' ' + ' '.join(map(str, df.iloc[0].tolist())).lower()
-        keywords = ['date', 'transaction', 'deposit', 'withdrawal', 'balance', '日期', '详情', '存入', '提取', '结余']
-        if sum(keyword in header_text for keyword in keywords) >= 3:
-            return True
-        return False
-
-    def extract_transactions_from_table(self, table_df: pd.DataFrame, page_num: int, target_account_type: str) -> list[dict]:
-        self.logger.info(f'=== 解析表格 {page_num} (目标账户类型: {target_account_type}) ===')
-        self.logger.info(f'表格形状: {table_df.shape}')
-        self.logger.info(f'--- 表格 {page_num} 完整原始数据 ---\n{table_df.to_string()}')
-
-        if self._is_structured_table(table_df):
-            self.logger.info("检测到结构化表格，但解析器未实现。")
-            pass
-
-        self.logger.info("使用混合模式解析器。")
-        transactions = []
-        inherited_date = None
-        inherited_currency = None
-
-        for index, row in table_df.iterrows():
-            row_text = ' '.join(map(str, row.tolist()))
-            account_type_in_row = self._identify_account_type_from_context(table_df, index, row_text)
-
-            if account_type_in_row is None:
-                account_type_in_row = target_account_type
-
-            if account_type_in_row != target_account_type:
-                continue
-
-            try:
-                self.logger.info(f"找到{target_account_type}交易行 {index}: {row_text[:100]}...")
-                parsed_transactions, inherited_date, inherited_currency = self._parse_mixed_format_row(
-                    row_text, index, table_df, inherited_date, inherited_currency
-                )
-                if parsed_transactions:
-                    for trans in parsed_transactions:
-                        trans['账户类型'] = target_account_type
-                        transactions.append(trans)
-                        self.logger.info(f"创建{target_account_type}交易: {trans['日期']} - {trans['交易描述']} - {trans['货币']} - 余额: {trans.get('结余', 'N/A')}")
-                    self.logger.info(f"从该行提取到 {len(parsed_transactions)} 条{target_account_type}交易")
-            except Exception as e:
-                self.logger.error(f"解析行 {index} 时出错: {e}", exc_info=True)
-
-        return transactions
-
-    def _identify_account_type_from_context(self, df: pd.DataFrame, current_index: int, row_text: str) -> str | None:
-        context_text = row_text
-        for i in range(max(0, current_index - 1), max(0, current_index - 3), -1):
-            if i < len(df):
-                context_text = ' '.join(map(str, df.iloc[i].tolist())) + ' ' + context_text
-
-        if any(keyword.lower() in context_text.lower() for keyword in self.HKD_CURRENT_KEYWORDS):
-            return '港币往来'
-        if any(keyword.lower() in context_text.lower() for keyword in self.HKD_SAVINGS_KEYWORDS):
-            return '港币储蓄'
-        if any(keyword.lower() in context_text.lower() for keyword in self.FOREIGN_SAVINGS_KEYWORDS) or any(code in context_text for code in self.CURRENCY_CODES):
-            return '外币储蓄'
-        return None
-
-    def _parse_mixed_format_row(self, row_text: str, row_index: int, df: pd.DataFrame, inherited_date: str | None, inherited_currency: str | None) -> tuple[list[dict], str | None, str | None]:
-        transactions = []
-        dates = self.date_pattern.findall(row_text)
-        amounts = [float(a.replace(',', '')) for a in self.amount_pattern.findall(row_text)]
+        # 初始化表格容器
+        self.hkd_current_tables = []
+        self.hkd_savings_tables = []
+        self.foreign_savings_tables = []
         
-        description_text = self.date_pattern.sub('', row_text)
-        description_text = self.amount_pattern.sub('', description_text)
-        descriptions = [d.strip() for d in description_text.split('\n') if d.strip() and not d.replace('.', '', 1).isdigit()]
+        # 用于跟踪已处理的5列表格数量
+        self.five_col_table_count = 0
         
-        paired_descriptions = []
-        i = 0
-        while i < len(descriptions):
-            if i + 1 < len(descriptions) and re.search('[\u4e00-\u9fff]', descriptions[i+1]):
-                paired_descriptions.append(f"{descriptions[i]} {descriptions[i+1]}")
-                i += 2
-            else:
-                paired_descriptions.append(descriptions[i])
-                i += 1
-
-        current_currency = self._extract_currency_from_text(row_text) or inherited_currency or 'HKD'
-
-        if 'B/F BALANCE' in row_text and 'CREDIT INTEREST' in row_text:
-            if len(amounts) == 3:
-                deposit, old_balance, new_balance = amounts
-                transactions.append({
-                    '日期': dates[0] if dates else inherited_date,
-                    '交易描述': 'B/F BALANCE 承前转结',
-                    '货币': current_currency,
-                    '存入': None,
-                    '提取': None,
-                    '结余': old_balance
-                })
-                transactions.append({
-                    '日期': dates[1] if len(dates) > 1 else dates[0],
-                    '交易描述': 'CREDIT INTEREST 利息收入',
-                    '货币': current_currency,
-                    '存入': deposit,
-                    '提取': None,
-                    '结余': new_balance
-                })
-            return transactions, dates[-1] if dates else inherited_date, current_currency
-
-        if dates and paired_descriptions and amounts:
-            # 标准化 'B/F BALANCE' 描述
-            final_description = ' '.join(paired_descriptions)
-            if 'B/F BALANCE' in final_description and '承前转结' not in final_description:
-                final_description = 'B/F BALANCE 承前转结'
-
-            balance = amounts[-1]
-            deposit = None
-            withdrawal = None
-            if len(amounts) > 1:
-                if any(k in row_text.lower() for k in ['deposit', 'credit', '存入', '利息']):
-                    deposit = amounts[-2]
-                else:
-                    withdrawal = amounts[-2]
-
-            transaction_record = {
-                '日期': dates[0],
-                '交易描述': final_description,
-                '货币': current_currency,
-                '存入': deposit,
-                '提取': withdrawal,
-                '结余': balance
-            }
-            if not self.should_filter_transaction(final_description):
-                transactions.append(transaction_record)
-
-        return transactions, dates[-1] if dates else inherited_date, current_currency
-
     def parse(self) -> list[dict]:
-        """解析PDF文件并提取交易记录"""
+        """解析汇丰银行账单PDF并提取交易记录"""
+        self.logger.info(f"开始解析汇丰银行账单: {self.file_path}")
+        
         try:
-            tables = camelot.read_pdf(self.file_path, pages='all', flavor='stream', edge_tol=500, row_tol=10)
+            # 使用pdfplumber打开PDF文件
+            with pdfplumber.open(self.file_path) as pdf:
+                # 遍历每一页
+                for page_num, page in enumerate(pdf.pages, 1):
+                    self.logger.info(f"处理第 {page_num} 页")
+                    
+                    # 提取当前页的表格
+                    tables = page.extract_tables()
+                    
+                    # 处理每个表格
+                    for table_num, table in enumerate(tables, 1):
+                        if not table or len(table) <= 1:  # 跳过空表格或只有一行的表格
+                            continue
+                            
+                        # 转换为DataFrame以便处理
+                        df = pd.DataFrame(table)
+                        
+                        # 检查表格的列数（使用第一行判断）
+                        num_cols = len(df.columns)
+                        
+                        # 根据列数和表头内容分类表格
+                        if num_cols == 5:
+                            # 检查表头是否包含关键词
+                            header = df.iloc[0].astype(str).str.lower()
+                            has_date = any('日期' in str(col) for col in header)
+                            has_balance = any('结余' in str(col) for col in header)
+                            
+                            if has_date and has_balance:
+                                # 是有效的5列表格，判断是港币往来还是港币储蓄
+                                if self.five_col_table_count == 0:
+                                    self.logger.info(f"找到港币往来表格: 页 {page_num}, 表格 {table_num}")
+                                    self.hkd_current_tables.append(df)
+                                else:
+                                    self.logger.info(f"找到港币储蓄表格: 页 {page_num}, 表格 {table_num}")
+                                    self.hkd_savings_tables.append(df)
+                                    
+                                self.five_col_table_count += 1
+                                
+                        elif num_cols == 6:
+                            # 检查表头是否包含关键词
+                            header = df.iloc[0].astype(str).str.lower()
+                            has_currency = any('货币' in str(col) for col in header)
+                            has_balance = any('结余' in str(col) for col in header)
+                            
+                            if has_currency and has_balance:
+                                self.logger.info(f"找到外币储蓄表格: 页 {page_num}, 表格 {table_num}")
+                                self.foreign_savings_tables.append(df)
+            
+            # 开始数据整理
+            self._process_tables()
+            
+            self.logger.info(f"解析完成，共提取 {len(self.transactions)} 条交易记录")
+            
+            return self.transactions
+            
         except Exception as e:
-            self.logger.error(f"使用Camelot读取PDF文件失败: {e}")
+            self.logger.error(f"解析汇丰银行账单时出错: {str(e)}")
+            raise
+    
+    def _process_tables(self):
+        """处理所有提取的表格"""
+        # 处理港币往来表格
+        hkd_current_df = self._merge_tables(self.hkd_current_tables, '港币往来')
+        
+        # 处理港币储蓄表格
+        hkd_savings_df = self._merge_tables(self.hkd_savings_tables, '港币储蓄')
+        
+        # 处理外币储蓄表格
+        foreign_savings_df = self._merge_tables(self.foreign_savings_tables, '外币储蓄')
+        
+        # 提取交易记录
+        hkd_current_transactions = self._extract_transactions(hkd_current_df, '港币往来', 'HKD')
+        hkd_savings_transactions = self._extract_transactions(hkd_savings_df, '港币储蓄', 'HKD')
+        foreign_savings_transactions = self._extract_foreign_transactions(foreign_savings_df)
+        
+        # 合并所有交易记录
+        self.transactions = hkd_current_transactions + hkd_savings_transactions + foreign_savings_transactions
+    
+    def _merge_tables(self, tables, account_type):
+        """合并同一账户类型的多个表格"""
+        if not tables:
+            self.logger.warning(f"没有找到{account_type}表格")
+            return pd.DataFrame()
+            
+        # 合并所有表格
+        merged_df = pd.concat(tables, ignore_index=True)
+        
+        # 设置列名（根据账户类型）
+        if account_type in ['港币往来', '港币储蓄']:
+            merged_df.columns = ['日期', '进支详情', '存入', '提取', '结余']
+        else:  # 外币储蓄
+            merged_df.columns = ['货币', '日期', '进支详情', '存入', '提取', '结余']
+        
+        # 移除重复的表头行（第一行是表头，其他行如果与表头相同则是重复的表头）
+        header = merged_df.iloc[0].astype(str)
+        merged_df = merged_df[~merged_df.apply(lambda row: row.equals(header), axis=1).shift(fill_value=False)]
+        
+        # 移除空行（所有值都为空或NaN）
+        merged_df = merged_df.dropna(how='all')
+        
+        # 重置索引
+        merged_df = merged_df.reset_index(drop=True)
+        
+        # 移除第一行（表头）
+        merged_df = merged_df.iloc[1:].reset_index(drop=True)
+        
+        # 替换NaN为空字符串
+        merged_df = merged_df.fillna('')
+        
+        return merged_df
+    
+    def _extract_transactions(self, df, account_type, currency):
+        """从DataFrame中提取交易记录"""
+        if df.empty:
             return []
-
-        self.logger.info(f"在PDF中找到 {len(tables)} 个表格。")
-        all_transactions = []
-
-        for i, table in enumerate(tables):
-            page_num = i + 1
-            self.logger.info(f"\n=== 第{page_num}页 调试信息 ===")
-            self.logger.info(f"找到 {len(tables)} 个表格")
-            self.logger.info(f"\n--- 表格 {i+1} 原始数据 ---")
-            self.logger.info(f"表格形状: {table.df.shape}")
-            self.logger.info(f"前5行数据:\n{table.df.head().to_string()}")
-
-            account_sections_on_page = self.find_account_sections_on_page([table.df], page_num)
-
-            for account_type, sections in account_sections_on_page.items():
-                if sections:
-                    self.logger.info(f"在表格 {i+1} 中找到 {len(sections)} 个 '{account_type}' 部分")
-                    transactions = self.extract_account_transactions([table.df], page_num, account_type, sections)
-                    all_transactions.extend(transactions)
-
-        self.transactions = all_transactions
-        return self.transactions
+            
+        transactions = []
+        current_date = None
+        
+        for _, row in df.iterrows():
+            # 提取日期（如果有）
+            if row['日期'] and row['日期'] != '':
+                try:
+                    # 尝试解析日期
+                    current_date = self._parse_date(row['日期'])
+                except:
+                    # 如果解析失败，保持当前日期不变
+                    pass
+            
+            # 跳过没有交易详情的行
+            if not row['进支详情'] or row['进支详情'] == '':
+                continue
+                
+            # 创建交易记录
+            transaction = {
+                '账户类型': account_type,
+                '日期': current_date,
+                '交易描述': row['进支详情'],
+                '货币': currency,
+                '存入金额': self._parse_amount(row['存入']),
+                '提取金额': self._parse_amount(row['提取']),
+                '结余': self._parse_amount(row['结余'])
+            }
+            
+            transactions.append(transaction)
+            
+        return transactions
+    
+    def _extract_foreign_transactions(self, df):
+        """从外币储蓄表格中提取交易记录"""
+        if df.empty:
+            return []
+            
+        transactions = []
+        current_currency = None
+        current_date = None
+        
+        for _, row in df.iterrows():
+            # 提取货币（如果有）
+            if row['货币'] and row['货币'] != '':
+                current_currency = row['货币']
+                
+            # 提取日期（如果有）
+            if row['日期'] and row['日期'] != '':
+                try:
+                    current_date = self._parse_date(row['日期'])
+                except:
+                    # 如果解析失败，保持当前日期不变
+                    pass
+            
+            # 跳过没有交易详情的行
+            if not row['进支详情'] or row['进支详情'] == '':
+                continue
+                
+            # 创建交易记录
+            transaction = {
+                '账户类型': '外币储蓄',
+                '日期': current_date,
+                '交易描述': row['进支详情'],
+                '货币': current_currency,
+                '存入金额': self._parse_amount(row['存入']),
+                '提取金额': self._parse_amount(row['提取']),
+                '结余': self._parse_amount(row['结余'])
+            }
+            
+            transactions.append(transaction)
+            
+        return transactions
+    
+    def _parse_date(self, date_str):
+        """解析日期字符串"""
+        # 移除非数字和分隔符
+        date_str = re.sub(r'[^0-9/\-.]', '', str(date_str))
+        
+        # 尝试不同的日期格式
+        date_formats = ['%d/%m/%Y', '%d-%m-%Y', '%d.%m.%Y', '%Y/%m/%d', '%Y-%m-%d', '%Y.%m.%d']
+        
+        for fmt in date_formats:
+            try:
+                return datetime.strptime(date_str, fmt).strftime('%Y-%m-%d')
+            except:
+                continue
+                
+        # 如果所有格式都失败，返回原始字符串
+        return date_str
+    
+    def _parse_amount(self, amount_str):
+        """解析金额字符串"""
+        if not amount_str or amount_str == '':
+            return None
+            
+        # 移除货币符号、逗号和空格
+        amount_str = re.sub(r'[^0-9.\-]', '', str(amount_str))
+        
+        try:
+            return float(amount_str)
+        except:
+            return None
 
 class ESunBankParser(BankParser):
     def parse(self) -> list[dict]:
